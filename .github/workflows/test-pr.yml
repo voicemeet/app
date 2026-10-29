@@ -3,16 +3,16 @@ run-name: ${{ github.event.client_payload.pr_title }} (#${{ github.event.client_
 
 on:
   repository_dispatch:
-    types: [ web-pull_request ]
+    types: [web-pull_request]
 
 # Declare default permissions as readonly.
 permissions:
   contents: read
 
 env:
-  repository: 'voicemeet/voicemeet'
-  main-path: 'main'
-  source-path: 'voicemeet'
+  repository: "voicemeet/voicemeet"
+  main-path: "main"
+  source-path: "voicemeet"
 
 jobs:
   get-flutter-version:
@@ -68,7 +68,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           java-version: "17.x"
-          distribution: 'temurin'
+          distribution: "temurin"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -119,6 +119,10 @@ jobs:
         run: flutter pub get
         working-directory: ${{ env.source-path }}
 
+      - name: Resolving ios dependencies
+        run: pod install --repo-update
+        working-directory: ${{ env.source-path }}/ios
+
       - name: Build Ipa
         run: flutter build ipa --no-codesign
         working-directory: ${{ env.source-path }}
@@ -154,6 +158,10 @@ jobs:
       - name: Resolving flutter dependencies
         run: flutter pub get
         working-directory: ${{ env.source-path }}
+
+      - name: Resolving macos dependencies
+        run: pod install --repo-update
+        working-directory: ${{ env.source-path }}/macos
 
       - name: Build macOS
         run: flutter build macos

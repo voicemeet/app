@@ -14,9 +14,9 @@ permissions:
   contents: read
 
 env:
-  repository: 'voicemeet/voicemeet'
-  main-path: 'main'
-  source-path: 'voicemeet'
+  repository: "voicemeet/voicemeet"
+  main-path: "main"
+  source-path: "voicemeet"
 
 jobs:
   get-flutter-version:
@@ -87,6 +87,10 @@ jobs:
         run: flutter pub get
         working-directory: ${{ env.source-path }}
 
+      - name: Resolving macos dependencies
+        run: pod install --repo-update
+        working-directory: ${{ env.source-path }}/macos
+
       - name: Build macOS
         run: |
           echo "╠ Releasing to mac app store..."
@@ -118,7 +122,7 @@ jobs:
           security import $THIRD_PARTY_MAC_DEVELOPER_APPLICATION_CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
           # security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          
+
           # apply provisioning profile
           # https://developer.apple.com/documentation/bundleresources/placing_content_in_a_bundle/
           # security cms -D -i voicemeet_mac_appstore.provisionprofile
@@ -138,15 +142,15 @@ jobs:
           # https://stackoverflow.com/questions/60384835/dyld-library-not-loaded-code-signature-invalid
           # codesign -dvvv VoiceMeet.app
           # https://lessons.livecode.com/a/876834-signing-and-uploading-apps-to-the-mac-app-store
-          
+
           # 1. Code sign executables
           echo "Code sign executables"
           /usr/bin/codesign --deep --force --sign "$THIRD_PARTY_MAC_DEVELOPER_APPLICATION_SIGNING_IDENTITY" build/macos/Build/Products/Release/VoiceMeet.app
-          
+
           # 2. Code sign entitlements.plist
           echo "Code sign entitlements.plist"
           /usr/bin/codesign --force --sign "$THIRD_PARTY_MAC_DEVELOPER_APPLICATION_SIGNING_IDENTITY" --entitlements macos/Runner/AppStore-Release.entitlements build/macos/Build/Products/Release/VoiceMeet.app
-          
+
           # 3. Just to confirm all is well, verify the code signing
           # No response means that there were no errors and it is code signed.
           # /usr/bin/codesign --verify build/macos/Build/Products/Release/VoiceMeet.app
