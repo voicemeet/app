@@ -1,7 +1,7 @@
 name: Weekly Build
 on:
   schedule:
-    - cron: '0 1 * * 6' # At 01:00 AM, only on Saturday, UTC
+    - cron: "0 1 * * 6" # At 01:00 AM, only on Saturday, UTC
   # Enable manual run
   workflow_dispatch:
 
@@ -10,9 +10,9 @@ permissions:
   contents: write
 
 env:
-  repository: 'voicemeet/voicemeet'
-  main-path: 'main'
-  source-path: 'voicemeet'
+  repository: "voicemeet/voicemeet"
+  main-path: "main"
+  source-path: "voicemeet"
 
 jobs:
   create-release:
@@ -77,10 +77,10 @@ jobs:
 
           BUILD_NUMBER=$(date '+%Y%m%d')
           echo "BUILD_NUMBER: $BUILD_NUMBER."
-          
+
           NIGHTLY_DATE=$(date '+%Y.%m.%d')
           echo "NIGHTLY_DATE: $NIGHTLY_DATE"
-          
+
           SUFFIX=weekly
           FULL_VERSION="$VERSION.$SUFFIX.$NIGHTLY_DATE"
 
@@ -157,7 +157,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           java-version: "17.x"
-          distribution: 'temurin'
+          distribution: "temurin"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -258,7 +258,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           java-version: "17.x"
-          distribution: 'temurin'
+          distribution: "temurin"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -295,7 +295,9 @@ jobs:
 
       # Build the application.
       - name: Build appbundle
-        run: flutter build appbundle --dart-define-from-file=.env --no-tree-shake-icons --flavor staging --build-name=$VERSION --build-number $BUILD_NUMBER --obfuscate --split-debug-info=./symbols-directory-appbundle
+        run: |
+          # https://docs.flutter.dev/release/breaking-changes/default-abi-filters-android#option-3-disable-flutters-default-abi-filtering
+          flutter build appbundle --dart-define-from-file=.env --no-tree-shake-icons --flavor staging --build-name=$VERSION --build-number $BUILD_NUMBER --obfuscate --split-debug-info=./symbols-directory-appbundle -Pdisable-abi-filtering=true
         env:
           VERSION: ${{ needs.create-release.outputs.version }}
           BUILD_NUMBER: ${{ needs.create-release.outputs.build_number }}
@@ -512,16 +514,16 @@ jobs:
           # create variables
           DEVELOPER_ID_APPLICATION_CERTIFICATE_PATH=$RUNNER_TEMP/build_developerID_application_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/kty-signing.keychain-db
-          
+
           # import certificate and provisioning profile from secrets
           echo -n "$DEVELOPER_ID_APPLICATION_P12_BASE64_MAC" | base64 --decode --output $DEVELOPER_ID_APPLICATION_CERTIFICATE_PATH
-          
+
           # create temporary keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           # security default-keychain -s $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          
+
           # import certificate to keychain
           security import $DEVELOPER_ID_APPLICATION_CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
@@ -833,7 +835,7 @@ jobs:
           security import $THIRD_PARTY_MAC_DEVELOPER_APPLICATION_CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
           # security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          
+
           # apply provisioning profile
           # https://developer.apple.com/documentation/bundleresources/placing_content_in_a_bundle/
           # security cms -D -i voicemeet_mac_appstore.provisionprofile
@@ -853,15 +855,15 @@ jobs:
           # https://stackoverflow.com/questions/60384835/dyld-library-not-loaded-code-signature-invalid
           # codesign -dvvv VoiceMeet.app
           # https://lessons.livecode.com/a/876834-signing-and-uploading-apps-to-the-mac-app-store
-          
+
           # 1. Code sign executables
           echo "Code sign executables"
           /usr/bin/codesign --deep --force --sign "$THIRD_PARTY_MAC_DEVELOPER_APPLICATION_SIGNING_IDENTITY" build/macos/Build/Products/Release/VoiceMeet.app
-          
+
           # 2. Code sign entitlements.plist
           echo "Code sign entitlements.plist"
           /usr/bin/codesign --force --sign "$THIRD_PARTY_MAC_DEVELOPER_APPLICATION_SIGNING_IDENTITY" --entitlements macos/Runner/AppStore-Release.entitlements build/macos/Build/Products/Release/VoiceMeet.app
-          
+
           # 3. Just to confirm all is well, verify the code signing
           # No response means that there were no errors and it is code signed.
           # /usr/bin/codesign --verify build/macos/Build/Products/Release/VoiceMeet.app
@@ -1210,7 +1212,7 @@ jobs:
           } else {
             echo "File($env:RUNNER_TEMP\voicemeet.pfx) doesn't exist."
           }
-          
+
           if (test-path -Path "$pwd\.env") {
             echo "Remove file($pwd\.env)"
             remove-item -Path "$pwd\.env" -Force -ErrorAction SilentlyContinue
@@ -1295,7 +1297,7 @@ jobs:
         run: |
           # 移除旧的 inno_setup.iss 文件
           remove-item -Path "$pwd\windows\packaging\exe\inno_setup.iss" -Force -ErrorAction SilentlyContinue
-          
+
           # 重命名 inno_setup_arm64.iss 文件
           $sourcePath = "$pwd\windows\packaging\exe\inno_setup_arm64.iss"
           $destinationPath = "$pwd\windows\packaging\exe\inno_setup.iss"
@@ -1378,7 +1380,7 @@ jobs:
           } else {
             echo "File($env:RUNNER_TEMP\voicemeet.pfx) doesn't exist."
           }
-          
+
           if (test-path -Path "$pwd\.env") {
             echo "Remove file($pwd\.env)"
             remove-item -Path "$pwd\.env" -Force -ErrorAction SilentlyContinue
@@ -1463,7 +1465,7 @@ jobs:
           $env:IconPath = "$pwd\windows\runner\resources\app_icon.ico"
           $env:FLUTTER_BUILD_OUTPUT_DIR = "$pwd\build\windows\$env:Platform\runner\Release"
           $env:LicensePath = "$env:FLUTTER_BUILD_OUTPUT_DIR\LICENSE.rtf"
-          
+
           pushd ./msi
 
           python preprocess.py --arp -d ../build/windows/$env:Platform/runner/Release -i ../windows/runner/resources/app_icon.ico -v "$env:VERSION.$env:BUILD_NUMBER"
@@ -1484,13 +1486,13 @@ jobs:
         shell: pwsh
         run: |
           $basePath = ".\msi\voicemeet\bin\$env:Platform\$env:Configuration"
-          
+
           Get-ChildItem "$basePath\*\*.msi" | ForEach-Object {
             if ($_ -match "\\$env:Platform\\$env:Configuration\\([^\\]+)\\([^\\]+)\.msi$") {
               Rename-Item $_.FullName "$($matches[2])-$env:RELEASE-windows-$env:Platform-$($matches[1]).msi"
             }
           }
-          
+
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\${{ env.main-path }}\msi"
           Get-ChildItem -Path "$basePath" -Filter "*.msi" -Recurse | Copy-Item -Destination "$env:GITHUB_WORKSPACE\${{ env.main-path }}\msi\" -Force
         env:
@@ -1617,7 +1619,7 @@ jobs:
           $env:IconPath = "$pwd\windows\runner\resources\app_icon.ico"
           $env:FLUTTER_BUILD_OUTPUT_DIR = "$pwd\build\windows\$env:Platform\runner\Release"
           $env:LicensePath = "$env:FLUTTER_BUILD_OUTPUT_DIR\LICENSE.rtf"
-          
+
           pushd ./msi
 
           python preprocess.py --arp -d ../build/windows/$env:Platform/runner/Release -i ../windows/runner/resources/app_icon.ico -v "$env:VERSION.$env:BUILD_NUMBER"
@@ -1638,13 +1640,13 @@ jobs:
         shell: pwsh
         run: |
           $basePath = ".\msi\voicemeet\bin\$env:Platform\$env:Configuration"
-          
+
           Get-ChildItem "$basePath\*\*.msi" | ForEach-Object {
             if ($_ -match "\\$env:Platform\\$env:Configuration\\([^\\]+)\\([^\\]+)\.msi$") {
               Rename-Item $_.FullName "$($matches[2])-$env:RELEASE-windows-$env:Platform-$($matches[1]).msi"
             }
           }
-          
+
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\${{ env.main-path }}\msi"
           Get-ChildItem -Path "$basePath" -Filter "*.msi" -Recurse | Copy-Item -Destination "$env:GITHUB_WORKSPACE\${{ env.main-path }}\msi\" -Force
         env:
@@ -1820,14 +1822,14 @@ jobs:
           } else {
             echo "File($env:RUNNER_TEMP\voicemeet.pfx) doesn't exist."
           }
-          
+
           if (test-path -Path "windows\packaging\msix\make_config.yaml") {
             echo "windows\packaging\msix\make_config.yaml"
             remove-item -Path "windows\packaging\msix\make_config.yaml" -Force -ErrorAction SilentlyContinue
           } else {
             echo "File(windows\packaging\msix\make_config.yaml) doesn't exist."
           }
-          
+
           if (test-path -Path "$pwd\.env") {
             echo "Remove file($pwd\.env)"
             remove-item -Path "$pwd\.env" -Force -ErrorAction SilentlyContinue
@@ -1975,14 +1977,14 @@ jobs:
           } else {
             echo "File($env:RUNNER_TEMP\voicemeet.pfx) doesn't exist."
           }
-          
+
           if (test-path -Path "windows\packaging\msix\make_config.yaml") {
             echo "windows\packaging\msix\make_config.yaml"
             remove-item -Path "windows\packaging\msix\make_config.yaml" -Force -ErrorAction SilentlyContinue
           } else {
             echo "File(windows\packaging\msix\make_config.yaml) doesn't exist."
           }
-          
+
           if (test-path -Path "$pwd\.env") {
             echo "Remove file($pwd\.env)"
             remove-item -Path "$pwd\.env" -Force -ErrorAction SilentlyContinue
