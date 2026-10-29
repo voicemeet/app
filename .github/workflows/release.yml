@@ -54,7 +54,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -114,8 +114,8 @@ jobs:
           echo "release=$VERSION_SHORT.$BUILD_NUMBER$SUFFIX" >> $GITHUB_OUTPUT
           echo "tag_name=v$VERSION_SHORT.$BUILD_NUMBER$SUFFIX" >> $GITHUB_OUTPUT
         env:
-          ENV: ${{ github.event.inputs.env }}
-          IS_LATEST: ${{ github.event.inputs.latest }}
+          ENV: ${{ inputs.env }}
+          IS_LATEST: ${{ inputs.latest }}
         working-directory: ${{ env.source-path }}
 
       - name: Create a release
@@ -162,8 +162,8 @@ jobs:
             gh release edit "$TAG_NAME" --prerelease --draft=false --tag "$TAG_NAME" --target "$SHA"
           fi
         env:
-          ENV: ${{ github.event.inputs.env }}
-          IS_LATEST: ${{ github.event.inputs.latest }}
+          ENV: ${{ inputs.env }}
+          IS_LATEST: ${{ inputs.latest }}
           SHA: ${{ needs.create-release.outputs.sha }}
           TAG_NAME: ${{ needs.create-release.outputs.tag_name }}
           GH_TOKEN: ${{ github.token }}
@@ -184,7 +184,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -207,7 +207,7 @@ jobs:
           ENV_BASE64="$([[ "$ENV" == "staging" ]] && echo "$ENV_STG_BASE64" || echo "$ENV_PROD_BASE64")"
           echo "$ENV_BASE64" | base64 --decode > .env
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64 }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64 }}
         working-directory: ${{ env.source-path }}
@@ -236,7 +236,7 @@ jobs:
           FLAVOR="$([[ "$ENV" == "staging" ]] && echo "staging" || echo "production")"
           flutter build apk --dart-define-from-file=.env --no-tree-shake-icons --flavor $FLAVOR --obfuscate --split-debug-info=./symbols-directory-apk
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
         working-directory: ${{ env.source-path }}
 
       # Package the build.
@@ -250,7 +250,7 @@ jobs:
           fi
         working-directory: ${{ env.source-path }}/build/app/outputs/flutter-apk
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
@@ -296,7 +296,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -319,7 +319,7 @@ jobs:
           ENV_BASE64="$([[ "$ENV" == "staging" ]] && echo "$ENV_STG_BASE64" || echo "$ENV_PROD_BASE64")"
           echo "$ENV_BASE64" | base64 --decode > .env
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64 }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64 }}
         working-directory: ${{ env.source-path }}
@@ -349,12 +349,12 @@ jobs:
           # https://docs.flutter.dev/release/breaking-changes/default-abi-filters-android#option-3-disable-flutters-default-abi-filtering
           flutter build appbundle --dart-define-from-file=.env --no-tree-shake-icons --flavor $FLAVOR --obfuscate --split-debug-info=./symbols-directory-appbundle -Pdisable-abi-filtering=true
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
         working-directory: ${{ env.source-path }}
 
       # Package the build.
       - name: Copy build for Android
-        if: github.event.inputs.env == 'staging'
+        if: inputs.env == 'staging'
         run: |
           mkdir -p $GITHUB_WORKSPACE/${{ env.main-path }}/appbundle
           cp *.aab $GITHUB_WORKSPACE/${{ env.main-path }}/appbundle/VoiceMeet-$RELEASE.aab
@@ -363,7 +363,7 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Copy build for Android
-        if: github.event.inputs.env == 'production'
+        if: inputs.env == 'production'
         run: |
           mkdir -p $GITHUB_WORKSPACE/${{ env.main-path }}/appbundle
           cp *.aab $GITHUB_WORKSPACE/${{ env.main-path }}/appbundle/VoiceMeet-$RELEASE.aab
@@ -414,7 +414,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -432,7 +432,7 @@ jobs:
           ENV_BASE64="$([[ "$ENV" == "staging" ]] && echo "$ENV_STG_BASE64" || echo "$ENV_PROD_BASE64")"
           echo "$ENV_BASE64" | base64 --decode > .env
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64 }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64 }}
         working-directory: ${{ env.source-path }}
@@ -483,12 +483,12 @@ jobs:
           mv $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
 
       - name: Build ipa
-        if: github.event.inputs.env == 'staging'
+        if: inputs.env == 'staging'
         run: flutter build ipa --dart-define-from-file=.env --obfuscate --split-debug-info=./symbols-directory-ipa --export-options-plist=ios/ExportOptions/debug.plist
         working-directory: ${{ env.source-path }}
 
       - name: Build ipa
-        if: github.event.inputs.env == 'production'
+        if: inputs.env == 'production'
         run: flutter build ipa --dart-define-from-file=.env --obfuscate --split-debug-info=./symbols-directory-ipa --export-options-plist=ios/ExportOptions/release.plist
         working-directory: ${{ env.source-path }}
 
@@ -547,7 +547,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -565,7 +565,7 @@ jobs:
           ENV_BASE64="$([[ "$ENV" == "staging" ]] && echo "$ENV_STG_BASE64" || echo "$ENV_PROD_BASE64")"
           echo "$ENV_BASE64" | base64 --decode > .env
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64 }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64 }}
         working-directory: ${{ env.source-path }}
@@ -692,7 +692,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -710,7 +710,7 @@ jobs:
           ENV_BASE64="$([[ "$ENV" == "staging" ]] && echo "$ENV_STG_BASE64" || echo "$ENV_PROD_BASE64")"
           echo "$ENV_BASE64" | base64 --decode > .env
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64 }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64 }}
         working-directory: ${{ env.source-path }}
@@ -864,7 +864,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -882,7 +882,7 @@ jobs:
           ENV_BASE64="$([[ "$ENV" == "staging" ]] && echo "$ENV_STG_BASE64" || echo "$ENV_PROD_BASE64")"
           echo "$ENV_BASE64" | base64 --decode > .env
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64 }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64 }}
         working-directory: ${{ env.source-path }}
@@ -1026,7 +1026,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -1044,7 +1044,7 @@ jobs:
           ENV_BASE64="$([[ "$ENV" == "staging" ]] && echo "$ENV_STG_BASE64" || echo "$ENV_PROD_BASE64")"
           echo "$ENV_BASE64" | base64 --decode > .env
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64 }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64 }}
         working-directory: ${{ env.source-path }}
@@ -1184,7 +1184,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -1203,7 +1203,7 @@ jobs:
           $bytes = echo $env_base64 | %{[Convert]::FromBase64String($_)}
           [IO.File]::WriteAllBytes("$pwd\.env", $bytes)
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64_WINDOWS }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64_WINDOWS }}
         working-directory: ${{ env.source-path }}
@@ -1338,7 +1338,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -1363,7 +1363,7 @@ jobs:
           $bytes = echo $env_base64 | %{[Convert]::FromBase64String($_)}
           [IO.File]::WriteAllBytes("$pwd\.env", $bytes)
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64_WINDOWS }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64_WINDOWS }}
         working-directory: ${{ env.source-path }}
@@ -1512,7 +1512,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -1541,7 +1541,7 @@ jobs:
           $bytes = echo $env_base64 | %{[Convert]::FromBase64String($_)}
           [IO.File]::WriteAllBytes("$pwd\.env", $bytes)
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64_WINDOWS }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64_WINDOWS }}
         working-directory: ${{ env.source-path }}
@@ -1660,7 +1660,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -1695,7 +1695,7 @@ jobs:
           $bytes = echo $env_base64 | %{[Convert]::FromBase64String($_)}
           [IO.File]::WriteAllBytes("$pwd\.env", $bytes)
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64_WINDOWS }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64_WINDOWS }}
         working-directory: ${{ env.source-path }}
@@ -1814,7 +1814,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -1833,7 +1833,7 @@ jobs:
           $bytes = echo $env_base64 | %{[Convert]::FromBase64String($_)}
           [IO.File]::WriteAllBytes("$pwd\.env", $bytes)
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64_WINDOWS }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64_WINDOWS }}
         working-directory: ${{ env.source-path }}
@@ -1966,7 +1966,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -1991,7 +1991,7 @@ jobs:
           $bytes = echo $env_base64 | %{[Convert]::FromBase64String($_)}
           [IO.File]::WriteAllBytes("$pwd\.env", $bytes)
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64_WINDOWS }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64_WINDOWS }}
         working-directory: ${{ env.source-path }}
@@ -2125,7 +2125,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -2144,7 +2144,7 @@ jobs:
           $bytes = echo $env_base64 | %{[Convert]::FromBase64String($_)}
           [IO.File]::WriteAllBytes("$pwd\.env", $bytes)
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64_WINDOWS }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64_WINDOWS }}
         working-directory: ${{ env.source-path }}
@@ -2226,7 +2226,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ inputs.ref }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -2251,7 +2251,7 @@ jobs:
           $bytes = echo $env_base64 | %{[Convert]::FromBase64String($_)}
           [IO.File]::WriteAllBytes("$pwd\.env", $bytes)
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ inputs.env }}
           ENV_STG_BASE64: ${{ secrets.ENV_STG_BASE64_WINDOWS }}
           ENV_PROD_BASE64: ${{ secrets.ENV_PROD_BASE64_WINDOWS }}
         working-directory: ${{ env.source-path }}
