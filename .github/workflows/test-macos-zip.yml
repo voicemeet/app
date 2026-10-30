@@ -14,9 +14,9 @@ permissions:
   contents: read
 
 env:
-  repository: 'voicemeet/voicemeet'
-  main-path: 'main'
-  source-path: 'voicemeet'
+  repository: "voicemeet/voicemeet"
+  main-path: "main"
+  source-path: "voicemeet"
 
 jobs:
   get-flutter-version:
@@ -86,6 +86,10 @@ jobs:
       - name: Resolving flutter dependencies
         run: flutter pub get
         working-directory: ${{ env.source-path }}
+
+      - name: Resolving macos dependencies
+        run: pod install --repo-update
+        working-directory: ${{ env.source-path }}/macos
 
       - name: Build macOS
         run: |
