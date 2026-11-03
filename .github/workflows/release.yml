@@ -242,6 +242,7 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
+        if: ${{ secrets.R2_ACCOUNT_ID && secrets.R2_ACCESS_KEY_ID && secrets.R2_SECRET_ACCESS_KEY && secrets.R2_RELEASE_BUCKET }}
         uses: ryand56/r2-upload-action@latest
         with:
           r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
@@ -252,6 +253,7 @@ jobs:
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/
 
       - name: Upload symbols
+        if: ${{ secrets.R2_ACCOUNT_ID && secrets.R2_ACCESS_KEY_ID && secrets.R2_SECRET_ACCESS_KEY && secrets.R2_BUCKET }}
         uses: ryand56/r2-upload-action@latest
         with:
           r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
@@ -360,6 +362,7 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
+        if: ${{ secrets.R2_ACCOUNT_ID && secrets.R2_ACCESS_KEY_ID && secrets.R2_SECRET_ACCESS_KEY && secrets.R2_RELEASE_BUCKET }}
         uses: ryand56/r2-upload-action@latest
         with:
           r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
@@ -370,6 +373,7 @@ jobs:
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/
 
       - name: Upload symbols
+        if: ${{ secrets.R2_ACCOUNT_ID && secrets.R2_ACCESS_KEY_ID && secrets.R2_SECRET_ACCESS_KEY && secrets.R2_BUCKET }}
         uses: ryand56/r2-upload-action@latest
         with:
           r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
@@ -486,6 +490,7 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
+        if: ${{ secrets.R2_ACCOUNT_ID && secrets.R2_ACCESS_KEY_ID && secrets.R2_SECRET_ACCESS_KEY && secrets.R2_RELEASE_BUCKET }}
         uses: ryand56/r2-upload-action@latest
         with:
           r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
@@ -496,6 +501,7 @@ jobs:
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/
 
       - name: Upload symbols
+        if: ${{ secrets.R2_ACCOUNT_ID && secrets.R2_ACCESS_KEY_ID && secrets.R2_SECRET_ACCESS_KEY && secrets.R2_BUCKET }}
         uses: ryand56/r2-upload-action@latest
         with:
           r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
