@@ -334,8 +334,7 @@ jobs:
       - name: Build appbundle
         run: |
           FLAVOR="$([[ "$ENV" == "staging" ]] && echo "staging" || echo "production")"
-          # https://docs.flutter.dev/release/breaking-changes/default-abi-filters-android#option-3-disable-flutters-default-abi-filtering
-          flutter build appbundle --dart-define-from-file=.env --no-tree-shake-icons --flavor $FLAVOR --obfuscate --split-debug-info=./symbols-directory-appbundle -Pdisable-abi-filtering=true
+          flutter build appbundle --dart-define-from-file=.env --no-tree-shake-icons --flavor $FLAVOR --obfuscate --split-debug-info=./symbols-directory-appbundle
         env:
           ENV: ${{ github.event.inputs.env }}
         working-directory: ${{ env.source-path }}

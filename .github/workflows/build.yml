@@ -284,8 +284,7 @@ jobs:
       # Build the application.
       - name: Build appbundle
         run: |
-          # https://docs.flutter.dev/release/breaking-changes/default-abi-filters-android#option-3-disable-flutters-default-abi-filtering
-          flutter build appbundle --dart-define-from-file=.env --no-tree-shake-icons --flavor staging --build-name=$VERSION --build-number $BUILD_NUMBER --obfuscate --split-debug-info=./symbols-directory-appbundle -Pdisable-abi-filtering=true
+          flutter build appbundle --dart-define-from-file=.env --no-tree-shake-icons --flavor staging --build-name=$VERSION --build-number $BUILD_NUMBER --obfuscate --split-debug-info=./symbols-directory-appbundle
         env:
           VERSION: ${{ needs.create-release.outputs.version }}
           BUILD_NUMBER: ${{ needs.create-release.outputs.build_number }}
