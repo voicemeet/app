@@ -4,6 +4,12 @@ on:
     - cron: "0 1 * * 6" # At 01:00 AM, only on Saturday, UTC
   # Enable manual run
   workflow_dispatch:
+    inputs:
+      ref:
+        type: string
+        description: "The branch, tag or SHA to checkout. (default to main)"
+        default: "main"
+        required: false
 
 # Declare default permissions as readonly.
 permissions:
@@ -37,6 +43,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
+          ref: ${{ inputs.ref || 'main' }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -139,6 +146,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
+          ref: ${{ inputs.ref || 'main' }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -240,6 +248,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
+          ref: ${{ inputs.ref || 'main' }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -342,6 +351,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ${{ env.repository }}
+          ref: ${{ inputs.ref || 'main' }}
           token: ${{ secrets.VM_RELEASE_TOKEN }}
           path: ${{ env.source-path }}
 
@@ -363,6 +373,10 @@ jobs:
       - name: Resolving flutter dependencies
         run: flutter pub get
         working-directory: ${{ env.source-path }}
+
+      - name: Resolving ios dependencies
+        run: pod install --repo-update
+        working-directory: ${{ env.source-path }}/ios
 
       - name: Install the Apple certificate and provisioning profile
         env:
