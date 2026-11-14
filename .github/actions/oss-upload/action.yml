@@ -1,0 +1,238 @@
+name: Upload to Aliyun OSS
+description: Upload a file or a directory to an Aliyun OSS bucket with ossutil 2.x
+
+inputs:
+  endpoint:
+    description: "Endpoint of the bucket region, e.g. https://oss-cn-shenzhen.aliyuncs.com"
+    required: true
+  region:
+    description: "Region ID, e.g. cn-shenzhen. Derived from the endpoint when left empty"
+    required: false
+    default: ''
+  access-key-id:
+    description: "RAM user AccessKey ID"
+    required: true
+  access-key-secret:
+    description: "RAM user AccessKey Secret"
+    required: true
+  sts-token:
+    description: "STS token, only needed when using temporary credentials"
+    required: false
+    default: ''
+  bucket:
+    description: "Target bucket name, without the oss:// scheme"
+    required: true
+  source-dir:
+    description: "Local file or directory to upload"
+    required: true
+  destination-dir:
+    description: "Destination prefix inside the bucket, e.g. v1.2.0/apk. Empty means the bucket root"
+    required: false
+    default: ''
+  acl:
+    description: "Object ACL: default, private or public-read. Empty inherits the bucket ACL"
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install ossutil
+      id: install
+      shell: bash
+      env:
+        OSSUTIL_VERSION: '2.4.1'
+      run: |
+        set -euo pipefail
+
+        case "${RUNNER_OS}-$(uname -m)" in
+          Linux-x86_64)  PACKAGE_ARCH='linux-amd64' ;;
+          Linux-aarch64) PACKAGE_ARCH='linux-arm64' ;;
+          macOS-arm64)   PACKAGE_ARCH='mac-arm64' ;;
+          macOS-x86_64)  PACKAGE_ARCH='mac-amd64' ;;
+          *)
+            echo "::error::Unsupported runner platform: ${RUNNER_OS}-$(uname -m)"
+            exit 1
+            ;;
+        esac
+
+        PACKAGE_NAME="ossutil-${OSSUTIL_VERSION}-${PACKAGE_ARCH}"
+        DOWNLOAD_URL="https://gosspublic.alicdn.com/ossutil/v2/${OSSUTIL_VERSION}/${PACKAGE_NAME}.zip"
+        INSTALL_DIR="${RUNNER_TEMP}/ossutil-v${OSSUTIL_VERSION}"
+
+        rm -rf "$INSTALL_DIR"
+        mkdir -p "$INSTALL_DIR"
+        echo "Downloading ${DOWNLOAD_URL}"
+        curl -fsSL "$DOWNLOAD_URL" -o "${RUNNER_TEMP}/ossutil.zip"
+        unzip -o -q "${RUNNER_TEMP}/ossutil.zip" -d "$INSTALL_DIR"
+        # The archive is only needed for the extraction step.
+        rm -f "${RUNNER_TEMP}/ossutil.zip"
+
+        OSSUTIL_BIN=$(find "$INSTALL_DIR" -type f -name ossutil -print -quit)
+        if [ -z "$OSSUTIL_BIN" ]; then
+          OSSUTIL_BIN=$(find "$INSTALL_DIR" -type f -perm -u+x -print -quit)
+        fi
+        if [ -z "$OSSUTIL_BIN" ]; then
+          echo "::error::ossutil binary not found in the downloaded package"
+          exit 1
+        fi
+
+        chmod +x "$OSSUTIL_BIN"
+        echo "$(dirname "$OSSUTIL_BIN")" >> "$GITHUB_PATH"
+        echo "bin=$OSSUTIL_BIN" >> "$GITHUB_OUTPUT"
+        echo "ossutil version: $("$OSSUTIL_BIN" version)"
+
+    - name: Upload to OSS
+      shell: bash
+      env:
+        OSSUTIL_BIN: ${{ steps.install.outputs.bin }}
+        INPUT_ENDPOINT: ${{ inputs.endpoint }}
+        INPUT_REGION: ${{ inputs.region }}
+        INPUT_BUCKET: ${{ inputs.bucket }}
+        INPUT_SOURCE_DIR: ${{ inputs.source-dir }}
+        INPUT_DESTINATION_DIR: ${{ inputs.destination-dir }}
+        INPUT_ACL: ${{ inputs.acl }}
+        # ossutil 2.x reads credentials from the environment, so no plaintext
+        # key file is ever written to disk. These variables live only inside
+        # this step's shell; see the "Clear credentials" step for the wipe.
+        OSS_ACCESS_KEY_ID: ${{ inputs.access-key-id }}
+        OSS_ACCESS_KEY_SECRET: ${{ inputs.access-key-secret }}
+        OSS_SESSION_TOKEN: ${{ inputs.sts-token }}
+      run: |
+        set -euo pipefail
+
+        # Belt and braces: mask the values even when they do not come from the
+        # secrets context, so no later `echo` can print them in clear text.
+        for value in "$OSS_ACCESS_KEY_ID" "$OSS_ACCESS_KEY_SECRET" "$OSS_SESSION_TOKEN"; do
+          if [ -n "$value" ]; then echo "::add-mask::${value}"; fi
+        done
+
+        # Everything ossutil may write while running is kept in RUNNER_TEMP and
+        # removed on exit, whether the upload succeeds, fails, or aborts early.
+        CHECKPOINT_DIR="${RUNNER_TEMP}/ossutil-checkpoint"
+        OUTPUT_DIR="${RUNNER_TEMP}/ossutil-output"
+        wipe_local_state() {
+          rm -rf "$CHECKPOINT_DIR" "$OUTPUT_DIR"
+          # Legacy credential file from ossutil 1.x, in case an old runner kept one.
+          rm -f "${RUNNER_TEMP}/ossutilconfig" "${RUNNER_TEMP}/.ossutilconfig"
+        }
+        trap wipe_local_state EXIT
+
+        MISSING=''
+        if [ -z "$INPUT_ENDPOINT" ]; then MISSING="${MISSING} endpoint"; fi
+        if [ -z "$OSS_ACCESS_KEY_ID" ]; then MISSING="${MISSING} access-key-id"; fi
+        if [ -z "$OSS_ACCESS_KEY_SECRET" ]; then MISSING="${MISSING} access-key-secret"; fi
+        if [ -z "$INPUT_BUCKET" ]; then MISSING="${MISSING} bucket"; fi
+        if [ -n "$MISSING" ]; then
+          echo "::error::Missing OSS configuration for this upload:${MISSING}"
+          exit 1
+        fi
+
+        if [ ! -e "$INPUT_SOURCE_DIR" ]; then
+          echo "::error::Source path does not exist: ${INPUT_SOURCE_DIR}"
+          exit 1
+        fi
+
+        # ossutil 2.x signs with v4 by default, which requires a region. Accept an
+        # explicit value and otherwise derive it from a standard OSS endpoint.
+        REGION="$INPUT_REGION"
+        if [ -z "$REGION" ]; then
+          ENDPOINT_HOST=$(printf '%s' "$INPUT_ENDPOINT" | sed -e 's#^[A-Za-z][A-Za-z0-9+.-]*://##' -e 's#/.*$##' -e 's#:.*$##')
+          REGION=$(printf '%s' "$ENDPOINT_HOST" | sed -e 's#\.aliyuncs\.com$##' -e 's#^oss-##' -e 's#-internal$##')
+          if ! printf '%s' "$REGION" | grep -Eq '^[a-z]{2}-[a-z0-9-]+$'; then
+            echo "::error::Cannot derive the region from endpoint '${INPUT_ENDPOINT}', please set the region input explicitly"
+            exit 1
+          fi
+        fi
+        export OSS_REGION="$REGION"
+        export OSS_ENDPOINT="$INPUT_ENDPOINT"
+        echo "Using region ${OSS_REGION} / endpoint ${OSS_ENDPOINT}"
+
+        # Normalise the prefix: drop a leading "./" and any leading/trailing slashes.
+        PREFIX=$(printf '%s' "$INPUT_DESTINATION_DIR" | sed -e 's#^\./##' -e 's#^/*##' -e 's#/*$##')
+
+        TARGET="oss://${INPUT_BUCKET}/"
+        if [ -n "$PREFIX" ]; then
+          TARGET="oss://${INPUT_BUCKET}/${PREFIX}/"
+        fi
+
+        mkdir -p "$CHECKPOINT_DIR" "$OUTPUT_DIR"
+
+        # -f skips the interactive confirmation, -u only uploads new or newer files
+        # so a retried job does not re-push artifacts that already landed.
+        # ossutil 2.x exits non-zero when any object fails, which fails this step.
+        UPLOAD_ARGS=(cp -f -u --no-progress)
+        UPLOAD_ARGS+=(--output-dir "$OUTPUT_DIR")
+        # Keep breakpoint state inside RUNNER_TEMP so it can be wiped afterwards
+        # instead of being written into the workspace or the home directory.
+        UPLOAD_ARGS+=(--checkpoint-dir "$CHECKPOINT_DIR")
+
+        if [ -d "$INPUT_SOURCE_DIR" ]; then
+          FILE_COUNT=$(find "$INPUT_SOURCE_DIR" -type f | wc -l | tr -d ' ')
+          if [ "$FILE_COUNT" -eq 0 ]; then
+            echo "::error::No files found under ${INPUT_SOURCE_DIR}, nothing to upload"
+            exit 1
+          fi
+          echo "Found ${FILE_COUNT} file(s) to upload"
+
+          UPLOAD_ARGS+=(--recursive)
+          # The trailing slash uploads the directory *contents* directly under the
+          # prefix; without it ossutil would add the local directory name as well.
+          SOURCE_PATH="${INPUT_SOURCE_DIR%/}/"
+        else
+          SOURCE_PATH="$INPUT_SOURCE_DIR"
+        fi
+
+        if [ -n "$INPUT_ACL" ]; then
+          UPLOAD_ARGS+=(--acl "$INPUT_ACL")
+        fi
+
+        echo "Uploading ${SOURCE_PATH} -> ${TARGET}"
+        if ! "$OSSUTIL_BIN" "${UPLOAD_ARGS[@]}" "$SOURCE_PATH" "$TARGET"; then
+          if compgen -G "${OUTPUT_DIR}/*.report" > /dev/null; then
+            echo "::group::ossutil error report"
+            head -n 50 "${OUTPUT_DIR}"/*.report
+            echo "::endgroup::"
+          fi
+          echo "::error::Upload to ${TARGET} failed"
+          exit 1
+        fi
+
+        # Purely informational: listing needs oss:ListObjects, which a least
+        # privileged key may not have, so it must not fail the upload step.
+        echo "Objects now stored under ${TARGET}:"
+        "$OSSUTIL_BIN" ls "$TARGET" --short-format 2>/dev/null \
+          || echo "::warning::Unable to list ${TARGET}, the upload itself succeeded"
+
+        # ossutil has done its work, so drop the credentials from this shell right
+        # away instead of waiting for the step to end.
+        OSS_ACCESS_KEY_ID=''
+        OSS_ACCESS_KEY_SECRET=''
+        OSS_SESSION_TOKEN=''
+        unset OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET OSS_SESSION_TOKEN
+
+    - name: Clear credentials
+      # Runs even when the upload failed or the job is being torn down, so no
+      # credential material survives on the runner.
+      if: always()
+      shell: bash
+      env:
+        OSS_ACCESS_KEY_ID: ${{ inputs.access-key-id }}
+        OSS_ACCESS_KEY_SECRET: ${{ inputs.access-key-secret }}
+        OSS_SESSION_TOKEN: ${{ inputs.sts-token }}
+      run: |
+        set -uo pipefail
+
+        # Wipe anything a previous run of this action could have left behind.
+        rm -rf "${RUNNER_TEMP}/ossutil-checkpoint" "${RUNNER_TEMP}/ossutil-output"
+        rm -f "${RUNNER_TEMP}/ossutilconfig" "${RUNNER_TEMP}/.ossutilconfig"
+
+        # Each step gets a fresh environment, so this only clears the current
+        # shell; it is here to make the intent explicit and to keep the values
+        # out of any child process started below.
+        OSS_ACCESS_KEY_ID=''
+        OSS_ACCESS_KEY_SECRET=''
+        OSS_SESSION_TOKEN=''
+        unset OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET OSS_SESSION_TOKEN
+
+        echo "Credential environment cleared"
