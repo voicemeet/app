@@ -30,6 +30,12 @@ env:
   repository: "voicemeet/voicemeet"
   main-path: "main"
   source-path: "voicemeet"
+  # Note: `uses:` does not support expressions, so the upload steps hardcode
+  # ./main/.github/actions/oss-upload and must stay in sync with main-path.
+  # Only the endpoint is declared here. The AccessKey pair is deliberately NOT
+  # workflow-level env: that would inject it into every step of every job,
+  # including third-party actions, so it is passed from secrets per call site.
+  OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
 
 jobs:
   create-release:
@@ -242,22 +248,22 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
-        uses: ryand56/r2-upload-action@latest
+        uses: ./${{ env.main-path }}/.github/actions/oss-upload
         with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          r2-bucket: ${{ secrets.R2_RELEASE_BUCKET }}
+          endpoint: ${{ env.OSS_ENDPOINT }}
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          bucket: ${{ secrets.OSS_RELEASE_BUCKET }}
           source-dir: ./${{ env.main-path }}/apk
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/
 
       - name: Upload symbols
-        uses: ryand56/r2-upload-action@latest
+        uses: ./${{ env.main-path }}/.github/actions/oss-upload
         with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          r2-bucket: ${{ secrets.R2_BUCKET }}
+          endpoint: ${{ env.OSS_ENDPOINT }}
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          bucket: ${{ secrets.OSS_BUCKET }}
           source-dir: ./${{ env.source-path }}/symbols-directory-apk
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/apk
 
@@ -359,22 +365,22 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
-        uses: ryand56/r2-upload-action@latest
+        uses: ./${{ env.main-path }}/.github/actions/oss-upload
         with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          r2-bucket: ${{ secrets.R2_RELEASE_BUCKET }}
+          endpoint: ${{ env.OSS_ENDPOINT }}
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          bucket: ${{ secrets.OSS_RELEASE_BUCKET }}
           source-dir: ./${{ env.main-path }}/appbundle
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/
 
       - name: Upload symbols
-        uses: ryand56/r2-upload-action@latest
+        uses: ./${{ env.main-path }}/.github/actions/oss-upload
         with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          r2-bucket: ${{ secrets.R2_BUCKET }}
+          endpoint: ${{ env.OSS_ENDPOINT }}
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          bucket: ${{ secrets.OSS_BUCKET }}
           source-dir: ./${{ env.source-path }}/symbols-directory-appbundle
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/appbundle
 
@@ -485,22 +491,22 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
-        uses: ryand56/r2-upload-action@latest
+        uses: ./${{ env.main-path }}/.github/actions/oss-upload
         with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          r2-bucket: ${{ secrets.R2_RELEASE_BUCKET }}
+          endpoint: ${{ env.OSS_ENDPOINT }}
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          bucket: ${{ secrets.OSS_RELEASE_BUCKET }}
           source-dir: ./${{ env.main-path }}/ipa
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/
 
       - name: Upload symbols
-        uses: ryand56/r2-upload-action@latest
+        uses: ./${{ env.main-path }}/.github/actions/oss-upload
         with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          r2-bucket: ${{ secrets.R2_BUCKET }}
+          endpoint: ${{ env.OSS_ENDPOINT }}
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          bucket: ${{ secrets.OSS_BUCKET }}
           source-dir: ./${{ env.source-path }}/symbols-directory-ipa
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/ipa
 
