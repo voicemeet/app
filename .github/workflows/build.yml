@@ -204,7 +204,7 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
-        uses: ./${{ env.main-path }}/.github/actions/oss-upload
+        uses: ./main/.github/actions/oss-upload
         with:
           endpoint: ${{ env.OSS_ENDPOINT }}
           access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
@@ -214,7 +214,7 @@ jobs:
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/
 
       - name: Upload symbols
-        uses: ./${{ env.main-path }}/.github/actions/oss-upload
+        uses: ./main/.github/actions/oss-upload
         with:
           endpoint: ${{ env.OSS_ENDPOINT }}
           access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
@@ -306,7 +306,7 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
-        uses: ./${{ env.main-path }}/.github/actions/oss-upload
+        uses: ./main/.github/actions/oss-upload
         with:
           endpoint: ${{ env.OSS_ENDPOINT }}
           access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
@@ -316,7 +316,7 @@ jobs:
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/
 
       - name: Upload symbols
-        uses: ./${{ env.main-path }}/.github/actions/oss-upload
+        uses: ./main/.github/actions/oss-upload
         with:
           endpoint: ${{ env.OSS_ENDPOINT }}
           access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
@@ -424,7 +424,7 @@ jobs:
           RELEASE: ${{ needs.create-release.outputs.release }}
 
       - name: Upload assets
-        uses: ./${{ env.main-path }}/.github/actions/oss-upload
+        uses: ./main/.github/actions/oss-upload
         with:
           endpoint: ${{ env.OSS_ENDPOINT }}
           access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
@@ -434,7 +434,7 @@ jobs:
           destination-dir: ./${{ needs.create-release.outputs.tag_name }}/
 
       - name: Upload symbols
-        uses: ./${{ env.main-path }}/.github/actions/oss-upload
+        uses: ./main/.github/actions/oss-upload
         with:
           endpoint: ${{ env.OSS_ENDPOINT }}
           access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
