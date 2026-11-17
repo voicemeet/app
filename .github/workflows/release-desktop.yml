@@ -1,0 +1,976 @@
+name: Release desktop
+run-name: "Release desktop ${{ inputs.ref || github.ref_name }} ${{ inputs.mas_upload == true && '上传到 App Store Connect' || '不上传到 App Store Connect' }}, ${{ inputs.MS_STORE == true && 'MSIX 商店包' || 'MSIX 开发包' }}, ${{ inputs.MAC_STORE == true && 'mas' || 'mas-dev' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        type: string
+        description: "The branch, tag or SHA to checkout. (default to main)"
+        default: "main"
+        required: false
+      mas_upload:
+        description: "构建完成后上传到 App Store Connect（需要 MAS_* secrets）"
+        type: boolean
+        default: false
+      MS_STORE:
+        description: "MSIX 作为商店包构建（不签名，认证后由微软重签）；取消勾选则签名，供侧载测试"
+        type: boolean
+        default: true
+      MAC_STORE:
+        description: "mas 作为 Mac App Store 商店包构建（出 .pkg）；取消勾选则打 mas-dev（开发验证，只出 .app）"
+        type: boolean
+        default: true
+
+concurrency:
+  # 手动触发时 github.ref 恒为「选中的分支」，无法区分目标提交；
+  # 拼上 inputs.ref，避免给不同提交发版时互相取消，同一提交重跑仍会取消上一轮
+  group: build-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+# ──────────────────────────────────────────────────────────────────
+# 签名 / 公证所需的 Repository secrets
+#
+# macOS（缺一不可：app 证书 + 公证凭据；pkg 另需 Installer 证书）
+#   MAC_CSC_LINK                    Developer ID Application 证书 .p12 的 base64
+#   MAC_CSC_KEY_PASSWORD            .p12 密码
+#   MAC_INSTALLER_CSC_LINK          Developer ID Installer 证书 .p12 的 base64（出 pkg 用）
+#   MAC_INSTALLER_CSC_KEY_PASSWORD  .p12 密码
+#   APPLE_API_KEY_P8                App Store Connect API Key(.p8) 的 base64   ┐ 推荐
+#   APPLE_API_KEY_ID                Key ID                                     │
+#   APPLE_API_ISSUER                Issuer UUID                                ┘
+#   或 APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID（Apple ID 方式）
+#
+# macOS · Mac App Store（与上架一套，缺任一项则跳过 mas 构建）
+#   MAS_CSC_LINK                    Apple Distribution 证书 .p12 的 base64（签 app）
+#   MAS_CSC_KEY_PASSWORD            .p12 密码
+#   MAS_INSTALLER_CSC_LINK          3rd Party Mac Developer Installer .p12 的 base64（签 pkg）
+#   MAS_INSTALLER_CSC_KEY_PASSWORD  .p12 密码
+#   MAS_PROVISIONING_PROFILE        Mac App Store 的 .provisionprofile 的 base64（可带换行）
+#   （上传复用 APPLE_API_KEY_* 那套凭据；仓库 Variable MAS_AUTO_UPLOAD=true 可让
+#     tag 推送时也自动上传，否则只在手动触发并勾选 mas_upload 时上传）
+#
+# macOS · mas-dev（手动触发时取消勾选 MAC_STORE 即走这套，只出 .app 供本地验证沙箱）
+#   MAS_CSC_LINK_DEV                Apple Development 证书 .p12 的 base64（签 app）
+#   MAS_CSC_KEY_PASSWORD_DEV        .p12 密码
+#   MAS_PROVISIONING_PROFILE_DEV    Development 分区 Mac App Development 类型 .provisionprofile 的 base64
+#                                   （带 ProvisionedDevices 设备列表；一个 format 只读自己那份，互不回退）
+#
+# macOS · 签名身份覆盖（可选，仓库 Variable，非 secret）
+#   MAS_IDENTITY        mas 用的证书名 / SHA1（Apple Distribution 或 3rd Party Mac Developer Application）
+#   MAS_IDENTITY_DEV    mas-dev 用的证书名 / SHA1（Apple Development）
+#   两者都留空时脚本按 profile 的 TeamIdentifier 从钥匙串自动挑同团队证书
+#
+# Windows
+#   WIN_CSC_LINK            代码签名证书 .pfx 的 base64（OV 或 EV）
+#   WIN_CSC_KEY_PASSWORD    .pfx 密码
+#
+# Linux（GPG：CI 已不再使用，仅本地 `npm run sign:checksums` 会用到）
+#   LINUX_GPG_PRIVATE_KEY   私钥的 base64（gpg --export-secret-keys --armor | base64）
+#   LINUX_GPG_KEY_ID        密钥 ID / 邮箱
+#   LINUX_GPG_PASSPHRASE    私钥口令（无口令则不配）
+#
+# 产物分发（阿里云 OSS，替代 actions/upload-artifact）
+#   OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET   RAM 子账号密钥，只授权目标 bucket 的 PutObject
+#   OSS_BUCKET / OSS_ENDPOINT                   仓库 Variables，如 voicemeet-release / oss-cn-hangzhou.aliyuncs.com
+#   OSS_REGION / OSS_SECURITY_TOKEN             可选 Variables/Secret，留空按 endpoint 走 V1 签名
+#   对象键：<version>.<run_number>/<原文件名>，序号自增建目录；同一轮 Re-run 序号不变，就地覆盖
+#   缺失时只告警不失败（fork 没有 secrets，仍能跑完出包）
+#
+# 工作空间（workspace）：两个仓库各 checkout 到一个子目录
+#   main/    = 本仓库（voicemeet/app），只需要 .github/workflows/*.yml
+#   desktop/ = voicemeet/voicemeet-desktop，实际打包的源码（package.json / scripts / build）
+#   所有 run 步骤默认在 desktop/ 下执行（各 job 的 defaults.run.working-directory），
+#   因此 npm ci、npx electron-builder、node scripts/... 里的相对路径都不用改。
+#   拉取 desktop 仓库用 VM_APP_TOKEN（与 release.yml / build.yml 一致），
+#   该 secret 为空时回退到 VM_APP_TOKEN（h5 用的那个），保证只有一个 token 时也能跑。
+#   ref 输入决定 checkout 哪个分支 / tag / commit，留空则取仓库默认分支。
+#
+# 任何一项缺失都会自动降级为「不签名/不公证」，构建不会失败；
+# 想把「发布必须签名」变成硬性要求，在仓库 Variables 里加 REQUIRE_SIGNING=true。
+# ──────────────────────────────────────────────────────────────────
+
+env:
+  # 工作空间：本仓库 → main/，desktop 源码仓库 → desktop/（详见文件顶部「工作空间」说明）
+  repository: 'voicemeet/voicemeet-desktop'
+  main-path: 'main'
+  source-path: 'desktop'
+
+  # 默认关闭自动探测；导入证书后由步骤改写为 true
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+  REQUIRE_SIGNING: ${{ vars.REQUIRE_SIGNING || 'false' }}
+  # openssl：Windows 默认不带，证书校验的兜底路径要用它。脚本会按需定位
+  # （PATH → Git for Windows 自带 → OpenSSL-Win64 → choco shim 等），
+  # 实在没有就自动装一个（choco → winget → scoop）。下面两个变量留空即用默认行为：
+  #   OPENSSL_PATH         指定用哪一份 openssl.exe
+  #   OPENSSL_AUTO_INSTALL 设 0 禁止自动安装（只用机器上已有的）
+  OPENSSL_PATH: ${{ vars.OPENSSL_PATH }}
+  OPENSSL_AUTO_INSTALL: ${{ vars.OPENSSL_AUTO_INSTALL }}
+  # 安装包多语言许可协议，默认开启；需要去掉时在仓库 Variables 里设为 0
+  #   PKG_EULA  pkg：注入多语言 license，Installer 的 License 面板出现语言下拉
+  #   DMG_EULA  dmg：挂载时先弹出多语言 SLA（dmg 那格经 eb-config 读取）
+  PKG_EULA: ${{ vars.PKG_EULA || '1' }}
+  DMG_EULA: ${{ vars.DMG_EULA || '1' }}
+  LXD_GROUP: lxd
+
+# ──────────────────────────────────────────────────────────────────
+# 组织方式：一个 job = 一个架构 × 一种格式
+#   macOS    : {arm64, x64, universal} × {dmg, pkg, zip}  + mas | mas-dev（App Store，universal 单独一格，由 MAC_STORE 二选一）
+#   Windows  : {x64, arm64} × {nsis, portable, msi, inno, msix}
+#   Linux    : {x64, arm64} × {AppImage, deb, rpm, flatpak, snap}
+#
+# 产物去向：每格打完包直接传阿里云 OSS（键 <version>.<run_number>/<原文件名>），
+# 不再有 upload-artifact，也没有汇总发 Release 的 release job ——
+# 每次运行一个独立目录（序号自增），旧构建原地保留，随时可按版本号 + 运行序号取回。
+# 好处：某种格式失败只挂一格，其它格式照常出包；重跑也只重跑那一格
+# 代价：每格都要 npm ci + build（约 2 分钟），总 job 数变多但完全并行
+# ──────────────────────────────────────────────────────────────────
+
+jobs:
+  create-release:
+    name: Create release
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.sha_step.outputs.sha }}
+      version: ${{ steps.version_step.outputs.version }}
+      version_short: ${{ steps.version_step.outputs.version_short }}
+      build_number: ${{ steps.version_step.outputs.build_number }}
+      tag_name: ${{ steps.version_step.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          path: ${{ env.main-path }}
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          repository: ${{ env.repository }}
+          ref: ${{ github.event.inputs.ref }}
+          token: ${{ secrets.VM_RELEASE_TOKEN }}
+          path: ${{ env.source-path }}
+
+      - name: Set sha
+        id: sha_step
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "SHA: $SHA."
+
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+        working-directory: ${{ env.main-path }}
+
+      - name: Set sha from source
+        id: sha_source_step
+        run: |
+          sha_source=$(git rev-parse HEAD)
+          echo "sha_source: $sha_source."
+
+          echo "sha_source=$sha_source" >> $GITHUB_OUTPUT
+        working-directory: ${{ env.source-path }}
+
+      - name: Set version
+        id: version_step
+        run: |
+          VERSION=$(yq '.version' package.json)
+          echo "VERSION: $VERSION."
+
+          BUILD_NUMBER="${{ github.run_number }}"
+          echo "BUILD_NUMBER: $BUILD_NUMBER."
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "tag=desktop-v$VERSION.$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "tag_name=Desktop v$VERSION.$BUILD_NUMBER" >> $GITHUB_OUTPUT
+        working-directory: ${{ env.source-path }}
+
+      - name: Create a release
+        run: |
+          RELEASE_NOTES="Release created by [releases](https://github.com/${{ github.repository }}) workflow run [#${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }})<br/><br/>Based on [voicemeet desktop](https://github.com/${{ env.repository }}/commit/${{ steps.sha_source_step.outputs.sha_source }})<br/><br/>Please refer to [CHANGELOG.md](https://github.com/${{ env.repository }}/blob/main/CHANGELOG.md) for details."
+          gh release create "$TAG" --draft --latest=false --prerelease=false --target "$SHA" --title "$TAG_NAME" --notes "$RELEASE_NOTES"
+        env:
+          SHA: ${{ steps.sha_step.outputs.sha }}
+          TAG: ${{ steps.version_step.outputs.tag }}
+          TAG_NAME: ${{ steps.version_step.outputs.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        working-directory: ${{ env.main-path }}
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-24.04
+    needs:
+      - create-release
+      - macos
+      - windows
+      - linux
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          path: ${{ env.main-path }}
+
+      - name: Publish a release
+        run: gh release edit "$TAG" --prerelease --draft=false --tag "$TAG_NAME" --target "$SHA"
+        env:
+          SHA: ${{ needs.create-release.outputs.sha }}
+          TAG: ${{ steps.version_step.outputs.tag }}
+          TAG_NAME: ${{ steps.version_step.outputs.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        working-directory: ${{ env.main-path }}
+
+  # ────────────────────────────────────────────────────────────────
+  # macOS：Apple Silicon runner（macos-26 为 arm64，Xcode 最新）
+  # 矩阵产出 arm64 / x64 / universal 三种架构。universal 合并与主机架构无关；
+  # x64 也可在 arm64 主机上交叉编译 —— electron-builder 会下载 x64 的 Electron，
+  # 本项目无原生 addon，无需为 x64 单独准备 Intel 主机。
+  # 若将来引入原生模块，x64 格需换 macos-15-intel（不要用 macos-14，2026-11-02 已 EOL）
+  # ────────────────────────────────────────────────────────────────
+  macos:
+    name: macOS / ${{ matrix.format }} / ${{ matrix.arch }}
+    runs-on: macos-26
+    needs:
+      - create-release
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # mas / mas-dev = Mac App Store 包（沙箱 + App Store 签名），与 pkg
+        # （Developer ID 下载版）是两条独立链路，各自一种格式，互不影响失败。
+        # 这两者互斥（同一轮只会出其中一种），所以 format 轴直接由 MAC_STORE 决定：
+        #   勾选 MAC_STORE（默认）= mas     → 商店包，出 .pkg
+        #   取消勾选           = mas-dev → 开发验证，只出 .app
+        # push 触发时 inputs 为空，按 mas 处理（商店包是发布链路）
+        # dmg/pkg/zip 出 arm64/x64/universal 三种架构；mas* 保持 universal：
+        # App Store Connect 上传只收一个包，per-arch 没有意义
+        # 表达式必须加引号：flow 序列里的 `${{` 会被 YAML 当成 flow mapping 起始符
+        format: [dmg, pkg, zip, "${{ inputs.MAC_STORE == false && 'mas-dev' || 'mas' }}"]
+        arch: [arm64, x64, universal]
+        exclude:
+          - format: mas
+            arch: x64
+          - format: mas
+            arch: arm64
+          - format: mas-dev
+            arch: x64
+          - format: mas-dev
+            arch: arm64
+    env:
+      # 证书与公证凭据全部从这里进，步骤里按需判断
+      MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+      MAC_INSTALLER_CSC_LINK: ${{ secrets.MAC_INSTALLER_CSC_LINK }}
+      MAC_INSTALLER_CSC_KEY_PASSWORD: ${{ secrets.MAC_INSTALLER_CSC_KEY_PASSWORD }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # Mac App Store
+      MAS_CSC_LINK: ${{ secrets.MAS_CSC_LINK }}
+      MAS_CSC_KEY_PASSWORD: ${{ secrets.MAS_CSC_KEY_PASSWORD }}
+      MAS_INSTALLER_CSC_LINK: ${{ secrets.MAS_INSTALLER_CSC_LINK }}
+      MAS_INSTALLER_CSC_KEY_PASSWORD: ${{ secrets.MAS_INSTALLER_CSC_KEY_PASSWORD }}
+      MAS_PROVISIONING_PROFILE: ${{ secrets.MAS_PROVISIONING_PROFILE }}
+      # mas-dev（format = mas-dev）专用的一套证书 / profile
+      MAS_CSC_LINK_DEV: ${{ secrets.MAS_CSC_LINK_DEV }}
+      MAS_CSC_KEY_PASSWORD_DEV: ${{ secrets.MAS_CSC_KEY_PASSWORD_DEV }}
+      MAS_PROVISIONING_PROFILE_DEV: ${{ secrets.MAS_PROVISIONING_PROFILE_DEV }}
+      # 签名身份覆盖（可选）：留空时 mas-build.mjs 按 profile 的 TeamIdentifier 自动
+      # 从钥匙串里挑同团队的证书。两种格式的证书类型不同，故分两个变量、互不回退：
+      #   MAS_IDENTITY      → mas     （Apple Distribution / 3rd Party Mac Developer Application）
+      #   MAS_IDENTITY_DEV  → mas-dev （Apple Development）
+      MAS_IDENTITY: ${{ vars.MAS_IDENTITY }}
+      MAS_IDENTITY_DEV: ${{ vars.MAS_IDENTITY_DEV }}
+      # 脚本 mas-build.mjs 也读 MAC_STORE 判断目标。它与 format 轴同源于同一次输入，
+      # 两者互为兜底、不会打架；push 触发时为空串，脚本按默认 true（商店包）处理
+      MAC_STORE: ${{ inputs.MAC_STORE }}
+    steps:
+      # ── 工作空间：两个仓库分别 checkout 到子目录 ─────────────────
+      # main/    = 本仓库（工作流定义就在这里）
+      # desktop/ = 真正要打包的源码仓库，ref 可指定分支 / tag / commit
+      # persist-credentials: false：后续步骤不需要 push，别把 token 留在 .git/config
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          path: ${{ env.main-path }}
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          repository: ${{ env.repository }}
+          ref: ${{ inputs.ref }}
+          # 读 desktop 私有仓库的 PAT；VM_APP_TOKEN
+          token: ${{ secrets.VM_APP_TOKEN }}
+          path: ${{ env.source-path }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          # 工作空间下 package-lock.json 不在仓库根，必须显式指到 desktop/
+          cache-dependency-path: ${{ env.source-path }}/package-lock.json
+
+      - name: Cache Electron + builder binaries
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          # hashFiles 始终以工作空间根为基准，锁文件在 desktop/ 下，故拼上 source-path
+          key: eb-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/package-lock.json', env.source-path)) }}
+          restore-keys: eb-${{ runner.os }}-${{ runner.arch }}-
+
+      # ── 导入证书到临时钥匙串 ─────────────────────────────────────
+      # 关键点：不设 CSC_LINK，让 electron-builder 在 search list 里自动发现。
+      # 因为 pkg 需要 Developer ID Installer，而 CSC_LINK 只带一个 p12 时
+      # electron-builder 会另建临时钥匙串，反而找不到 Installer 证书。
+      - name: Import signing certificates
+        # 三套证书按格式隔离，互不交叉：
+        #   dmg/pkg/zip → Developer ID（MAC_*）
+        #   mas         → App Store 分发（MAS_*）
+        #   mas-dev     → App Store 开发（MAS_*_DEV）
+        # 全空就整步跳过（fork 上不建钥匙串）
+        if: >-
+          (matrix.format != 'mas' && matrix.format != 'mas-dev' && env.MAC_CSC_LINK != '') ||
+          (matrix.format == 'mas' && env.MAS_CSC_LINK != '') ||
+          (matrix.format == 'mas-dev' && env.MAS_CSC_LINK_DEV != '')
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          import_p12() {
+            b64="$1"; pass="$2"; name="$3"
+            if [ -z "$b64" ]; then return 0; fi
+            # secret 里存的 base64 可能带换行（macOS 的 base64 默认 76 列折行），
+            # openssl -A 要求单行输入，不先剥空白会解出半个 p12
+            printf '%s' "$b64" | tr -d ' \t\r\n' | openssl base64 -d -A > "$RUNNER_TEMP/$name.p12"
+            security import "$RUNNER_TEMP/$name.p12" -P "$pass" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+            rm -f "$RUNNER_TEMP/$name.p12"
+          }
+          # App Store 那套证书与 Developer ID 完全独立，且只在对应格式里导入 ——
+          # 多导一份只会让 codesign 更容易挑错身份：
+          #   mas     ：Apple Distribution 签 app + 3rd Party Mac Developer Installer 签 pkg
+          #   mas-dev ：只出 .app，只要 Apple Development 签 app，不导 Installer
+          #   其它格式：Developer ID Application 签 app + Developer ID Installer 签 pkg
+          if [ "${{ matrix.format }}" = "mas" ]; then
+            import_p12 "$MAS_CSC_LINK" "$MAS_CSC_KEY_PASSWORD" mas-app
+            import_p12 "$MAS_INSTALLER_CSC_LINK" "$MAS_INSTALLER_CSC_KEY_PASSWORD" mas-installer
+          elif [ "${{ matrix.format }}" = "mas-dev" ]; then
+            import_p12 "$MAS_CSC_LINK_DEV" "$MAS_CSC_KEY_PASSWORD_DEV" mas-app-dev
+          else
+            import_p12 "$MAC_CSC_LINK" "$MAC_CSC_KEY_PASSWORD" app
+            import_p12 "$MAC_INSTALLER_CSC_LINK" "$MAC_INSTALLER_CSC_KEY_PASSWORD" installer
+          fi
+
+          # 让 codesign / productbuild 无需交互即可访问私钥
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          EXISTING="$(security list-keychains -d user | tr -d ' "')"
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "$KEYCHAIN" $EXISTING
+
+          echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
+          echo "已导入的身份："
+          security find-identity -v "$KEYCHAIN"
+        working-directory: ${{ env.source-path }}
+
+      # ── 公证凭据：把 .p8 落盘（notarytool 需要文件路径）────────────
+      - name: Prepare notarization key
+        if: env.APPLE_API_KEY_P8 != ''
+        run: |
+          printf '%s' "$APPLE_API_KEY_P8" | tr -d ' \t\r\n' | openssl base64 -d -A > "$RUNNER_TEMP/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+        working-directory: ${{ env.source-path }}
+
+      - run: npm ci
+        working-directory: ${{ env.source-path }}
+
+      - run: npm run build
+        working-directory: ${{ env.source-path }}
+
+      # ── App Store 的 provisioning profile ────────────────────────
+      # profile 是账号资料，不进仓库；CI 里从 secret 解码到约定的默认位置。
+      # 一个 format 只对应一份 profile，两个格各解各的文件，互不读取：
+      #   mas     → embedded.provisionprofile（分发）
+      #   mas-dev → embedded-dev.provisionprofile（开发）
+      # secret 里存的是 base64（可能带换行），先剥空白再解码。
+      - name: Prepare MAS provisioning profile
+        if: matrix.format == 'mas' && env.MAS_PROVISIONING_PROFILE != ''
+        run: |
+          mkdir -p build/installers/mas
+          printf '%s' "$MAS_PROVISIONING_PROFILE" | tr -d ' \t\r\n' | openssl base64 -d -A \
+            > build/installers/mas/embedded.provisionprofile
+          if [ ! -s build/installers/mas/embedded.provisionprofile ]; then
+            echo "::error::MAS_PROVISIONING_PROFILE 解码后为空，确认 secret 存的是 profile 的 base64"
+            exit 1
+          fi
+          # 必须全局可读：osx-sign 会把它原样嵌进 Contents/embedded.provisionprofile，
+          # mode 保留进 pkg，0600 会让 Transporter 报 ITMS-90255（仅 root 可读）
+          chmod 644 build/installers/mas/embedded.provisionprofile
+          ls -l build/installers/mas/embedded.provisionprofile
+        working-directory: ${{ env.source-path }}
+
+      - name: Prepare MAS dev provisioning profile
+        if: matrix.format == 'mas-dev' && env.MAS_PROVISIONING_PROFILE_DEV != ''
+        run: |
+          mkdir -p build/installers/mas
+          printf '%s' "$MAS_PROVISIONING_PROFILE_DEV" | tr -d ' \t\r\n' | openssl base64 -d -A \
+            > build/installers/mas/embedded-dev.provisionprofile
+          if [ ! -s build/installers/mas/embedded-dev.provisionprofile ]; then
+            echo "::error::MAS_PROVISIONING_PROFILE_DEV 解码后为空，确认 secret 存的是 profile 的 base64"
+            exit 1
+          fi
+          # 同上：开发包虽不上架，但权限保持一致，避免两套行为
+          chmod 644 build/installers/mas/embedded-dev.provisionprofile
+          ls -l build/installers/mas/embedded-dev.provisionprofile
+        working-directory: ${{ env.source-path }}
+
+      # 只打一种格式 × 一种架构。
+      # 必须显式传 --arm64/--x64/--universal：CLI 指定 target 后会忽略
+      # electron-builder.yml 里的 arch 列表并回退到「当前主机架构」，
+      # 不写的话在 arm64 runner 上会静默产出 arm64-only 包
+      # （mas / mas-dev 例外：要注入 provisioning profile 路径，走下面的专用步骤）
+      - name: Package ${{ matrix.format }} (${{ matrix.arch }})
+        if: matrix.format != 'mas' && matrix.format != 'mas-dev'
+        run: |
+          # dmg 走 eb-config，才能让 DMG_EULA 控制是否带多语言 SLA；
+          # 其余格式的配置无需装配器，保持直调 electron-builder。
+          CONFIG_ARGS=""
+          if [ "${{ matrix.format }}" = "dmg" ]; then
+            CONFIG_ARGS="-c scripts/common/eb-config.js"
+          fi
+          npx electron-builder --mac ${{ matrix.format }} --${{ matrix.arch }} --publish never $CONFIG_ARGS
+        working-directory: ${{ env.source-path }}
+
+      # App Store 包：由脚本注入 profile 路径 + 校验 profile 与 appId/证书类型是否匹配
+      # 没有 MAS 凭据时跳过（fork / 未配置 secret 的仓库仍能跑其它格式）；
+      # mas 与 mas-dev 各用各自那套 secrets
+      - name: Package mas (Mac App Store)
+        if: matrix.format == 'mas' && env.MAS_CSC_LINK != '' && env.MAS_PROVISIONING_PROFILE != ''
+        run: node scripts/mac/mas-build.mjs --${{ matrix.arch }} --skip-build
+        working-directory: ${{ env.source-path }}
+
+      - name: Package mas-dev (本地验证沙箱)
+        if: matrix.format == 'mas-dev' && env.MAS_CSC_LINK_DEV != '' && env.MAS_PROVISIONING_PROFILE_DEV != ''
+        run: node scripts/mac/mas-build.mjs --${{ matrix.arch }} --skip-build --dev
+        working-directory: ${{ env.source-path }}
+
+      - name: Skip mas (缺少 App Store 凭据)
+        if: >-
+          (matrix.format == 'mas' && (env.MAS_CSC_LINK == '' || env.MAS_PROVISIONING_PROFILE == '')) ||
+          (matrix.format == 'mas-dev' && (env.MAS_CSC_LINK_DEV == '' || env.MAS_PROVISIONING_PROFILE_DEV == ''))
+        run: |
+          echo "::notice::${{ matrix.format }}：未配置对应的 App Store 凭据，跳过构建"
+          echo "  mas 需要 secrets：MAS_CSC_LINK、MAS_INSTALLER_CSC_LINK、MAS_PROVISIONING_PROFILE"
+          echo "  mas-dev 需要 secrets：MAS_CSC_LINK_DEV、MAS_PROVISIONING_PROFILE_DEV"
+        working-directory: ${{ env.source-path }}
+
+      # 签名校验与「是否上传」解耦：只要产出了 mas / mas-dev 包就必须通过。
+      # App Store 包不公证（App Review 代替），所以这里校验签名本身与证书类型：
+      #   app → codesign --verify --deep --strict
+      #   pkg → pkgutil --check-signature，且必须是 App Store 安装器证书（不能是 Developer ID）
+      - name: Verify mas signatures
+        if: >-
+          (matrix.format == 'mas' && env.MAS_CSC_LINK != '' && env.MAS_PROVISIONING_PROFILE != '') ||
+          (matrix.format == 'mas-dev' && env.MAS_CSC_LINK_DEV != '' && env.MAS_PROVISIONING_PROFILE_DEV != '')
+        run: node scripts/common/verify-signatures.mjs --require
+        working-directory: ${{ env.source-path }}
+
+      # pkg 注入多语言安装界面 + 多语言许可协议（单包，运行时按系统语言选择）
+      # 注意：pkgutil expand/flatten 会破坏签名与公证，必须紧跟重签
+      - name: Localize pkg
+        if: matrix.format == 'pkg'
+        run: node scripts/mac/localize-pkg.mjs
+        working-directory: ${{ env.source-path }}
+
+      # dmg 公证 / pkg 重签+公证+staple；zip 内的 app 已由 afterSign 装订票据
+      # mas* 不公证（App Review 代替），也不该被 sign-mac 重签
+      - name: Sign & notarize
+        if: matrix.format != 'zip' && matrix.format != 'mas' && matrix.format != 'mas-dev'
+        run: |
+          ARGS="--only ${{ matrix.format }}"
+          if [ -n "$MAC_CSC_LINK" ]; then ARGS="$ARGS --require"; fi
+          node scripts/mac/sign-mac.mjs $ARGS
+        working-directory: ${{ env.source-path }}
+
+      # App Store 包的质量闸（与上传无关，永远执行）：沙箱授权、profile 内嵌、
+      # Installer 证书类型、bundle id / 版本号 / payload。
+      # 与上面 Verify mas signatures 的分工：那边只验「签名本身有效」，
+      # 这里验「App Review 会挑的那些规则」，两者任一不过都算失败。
+      # （mas-dev 只出 .app、无 pkg，不走这套检查，也不上传 App Store Connect）
+      - name: Check MAS package
+        if: matrix.format == 'mas' && env.MAS_CSC_LINK != '' && env.MAS_PROVISIONING_PROFILE != ''
+        run: node scripts/mac/upload-mas.mjs --check-only
+        working-directory: ${{ env.source-path }}
+
+      # 上传 App Store Connect：默认只在手动触发并勾选 mas_upload 时执行；
+      # 仓库 Variable MAS_AUTO_UPLOAD=true 时，tag 推送也会自动上传
+      - name: Upload to App Store Connect
+        if: matrix.format == 'mas' && env.MAS_CSC_LINK != '' && (inputs.mas_upload == true || (github.event_name == 'push' && vars.MAS_AUTO_UPLOAD == 'true'))
+        run: node scripts/mac/upload-mas.mjs
+        working-directory: ${{ env.source-path }}
+
+      # 下载版产物的签名 / 公证校验（mas* 已在打包后单独校验，见 Verify mas signatures）
+      - name: Verify signatures (dmg/pkg/zip)
+        if: matrix.format != 'mas' && matrix.format != 'mas-dev'
+        run: |
+          if [ -n "$MAC_CSC_LINK" ]; then
+            node scripts/common/verify-signatures.mjs --require
+          else
+            echo "未配置签名证书，跳过强制校验"
+            node scripts/common/verify-signatures.mjs || true
+          fi
+        working-directory: ${{ env.source-path }}
+
+      # ── 产物上传：阿里云 OSS（artifact 已取消，这是唯一存放处）────────
+      # 对象键 <version>.<run_number>/<文件名>：每次运行一个独立目录，重跑不覆盖旧构建。
+      # 三种情况各写一步、if 写全，不用 case 兜底 —— 一眼能看出每种格式传什么、从哪传。
+      # .blockmap 一并传：文件名带完整包名（<包名>.dmg.blockmap），不同架构不会撞；
+      # 而 .yml（latest*.yml）每个架构各一份且同名，同一前缀下必然互相覆盖，暂时不传。
+      # 凭据只挂上传步骤：job 级 env 会连 checkout / setup-node / cache 一起读到。
+
+      # dmg / pkg / zip：产物就在 dist 根，按扩展名匹配
+      - name: Upload to Aliyun OSS (dmg / pkg / zip)
+        if: matrix.format != 'mas' && matrix.format != 'mas-dev'
+        shell: bash
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+          OSS_REGION: ${{ vars.OSS_REGION }}
+          OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
+        # dmg / zip 有 blockmap（pkg 没有）。多带一个 pattern 不会让步骤失败：
+        # 脚本只要整体匹配到 ≥1 个文件就继续，缺 blockmap 时自然跳过
+        run: >-
+          node scripts/common/upload-oss.mjs --dir dist
+          --pattern '*.${{ matrix.format }}' --pattern '*.${{ matrix.format }}.blockmap'
+        working-directory: ${{ env.source-path }}
+
+      # mas：商店包在子目录 dist/mas-<arch>/ 里，不在 dist 根，用 --dir 指过去
+      - name: Upload to Aliyun OSS (mas .pkg)
+        if: matrix.format == 'mas'
+        shell: bash
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+          OSS_REGION: ${{ vars.OSS_REGION }}
+          OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
+        run: |
+          set -euo pipefail
+          DIR="dist/mas-${{ matrix.arch }}"
+          # 缺 App Store 凭据时整格被跳过：目录可能不存在，也可能是残留的空目录，
+          # 两种都按「本格没产物」处理，不让上传步骤变红
+          if [ -z "$(ls -A "$DIR" 2>/dev/null)" ]; then
+            echo "::notice::$DIR 没有产物（缺 App Store 凭据，本格被跳过），不传 OSS"
+            exit 0
+          fi
+          node scripts/common/upload-oss.mjs --dir "$DIR" --pattern '*.pkg'
+        working-directory: ${{ env.source-path }}
+
+      # mas-dev：只有 VoiceMeet.app 目录，先 ditto 打成 zip 再传。
+      # 必须用 ditto：zip -r 会把 Framework 里的符号链接拍成实体副本，解压后签名校验必挂。
+      - name: Upload to Aliyun OSS (mas-dev .app → zip)
+        if: matrix.format == 'mas-dev'
+        shell: bash
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+          OSS_REGION: ${{ vars.OSS_REGION }}
+          OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
+        run: |
+          set -euo pipefail
+          DIR="dist/mas-dev-${{ matrix.arch }}"
+          APP="$(ls -d "$DIR"/*.app 2>/dev/null | head -1 || true)"
+          if [ -z "$APP" ]; then
+            echo "::notice::$DIR 下没有 .app（缺 App Store 凭据，本格被跳过），不传 OSS"
+            exit 0
+          fi
+          VERSION="$(node -p "require('./package.json').version")"
+          # zip 名沿用 electron-builder 风格：<产品名>-<版本>-mas-dev-<架构>.zip
+          ZIP="dist/$(basename "${APP%.app}")-${VERSION}-mas-dev-${{ matrix.arch }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+          node scripts/common/upload-oss.mjs --dir dist --pattern "$(basename "$ZIP")"
+        working-directory: ${{ env.source-path }}
+
+      # ── 收尾：清理钥匙串 / 证书 / 私钥 ──────────────────────────────
+      # `if: always()` ＝ 成功、失败、被取消都执行，且必须放在最后：
+      # 产物已传 OSS，删的只是凭据（临时钥匙串、.p12/.p8、MAS profile）。
+      # 不清理的后果：search list 里留着一个已删除的钥匙串，后续 codesign 会挑错身份；
+      # 自建 runner 上更危险——下一个 job 能直接用上一轮的私钥签包。
+      - name: Cleanup signing material
+        if: always()
+        continue-on-error: true
+        run: node scripts/common/ci-cleanup.mjs
+        working-directory: ${{ env.source-path }}
+
+  # ────────────────────────────────────────────────────────────────
+  # Windows：x64 与 arm64 各跑自己的原生 runner
+  #   x64   → windows-2022
+  #   arm64 → windows-11-arm（GA，2026-09 起默认 VS2026）
+  # 原生 runner 的意义：@electron/rebuild 能在目标架构上编译原生模块
+  # （即构 Zego 的 .node、未来的 SQLite 等），交叉打包做不到这一点。
+  # 若仓库/套餐不支持 arm64 runner，把 runner 改回 windows-2022 并给命令
+  # 加 --arm64 即可回退（会失去原生编译能力）。
+  # ────────────────────────────────────────────────────────────────
+  windows:
+    name: Windows / ${{ matrix.format }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - create-release
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        format: [nsis, portable, msi, inno, msix]
+        include:
+          - arch: x64
+            runner: windows-2022
+            unpacked: win-unpacked
+          - arch: arm64
+            runner: windows-11-arm
+            unpacked: win-arm64-unpacked
+    env:
+      # electron-builder 用 CSC_LINK 自动签 app exe / dll / nsis / portable / msi；
+      # scripts/win/make-inno.mjs 与 make-msix.mjs 读同一变量补签自己的产物
+      CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      MSIX_PUBLISHER: ${{ inputs.MS_STORE && secrets.MSIX_PUBLISHER || secrets.MSIX_PUBLISHER_DEV }}
+      # 清单 Identity/@Name；未配置时脚本回退到 com.voicemeet.voicemeet
+      MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+      # 清单 PublisherDisplayName（商店里显示的发布者）；必填，缺失时 make-msix 直接失败
+      MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+      # 商店包开关：true（默认，也是 tag 推送时的取值）= msix 不签名，认证后由微软重签；
+      # false = 出签名 msix，用于侧载 / 内部测试（此时 Publisher 必须与证书 Subject 一致）。
+      # push 触发时 inputs 为空串，脚本按默认 true 处理。
+      MS_STORE: ${{ inputs.MS_STORE }}
+    steps:
+      # ── 工作空间：两个仓库分别 checkout 到子目录 ─────────────────
+      # main/    = 本仓库（工作流定义就在这里）
+      # desktop/ = 真正要打包的源码仓库，ref 可指定分支 / tag / commit
+      # persist-credentials: false：后续步骤不需要 push，别把 token 留在 .git/config
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          path: ${{ env.main-path }}
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          repository: ${{ env.repository }}
+          ref: ${{ inputs.ref }}
+          # 读 desktop 私有仓库的 PAT；VM_APP_TOKEN
+          token: ${{ secrets.VM_APP_TOKEN }}
+          path: ${{ env.source-path }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          # 工作空间下 package-lock.json 不在仓库根，必须显式指到 desktop/
+          cache-dependency-path: ${{ env.source-path }}/package-lock.json
+
+      - name: Cache Electron + builder binaries
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          # hashFiles 始终以工作空间根为基准，锁文件在 desktop/ 下，故拼上 source-path
+          key: eb-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/package-lock.json', env.source-path)) }}
+          restore-keys: eb-${{ runner.os }}-${{ runner.arch }}-
+
+      - run: npm ci
+        working-directory: ${{ env.source-path }}
+
+      - run: npm run build
+        working-directory: ${{ env.source-path }}
+
+      # ── 证书体检 ─────────────────────────────────────────────────
+      # .pfx 不是代码签名证书时，electron-builder 会在签名阶段抛
+      # "Cannot extract publisher name from code signing certificate"，
+      # 连未签名包都产不出来（nsis 就是这样挂的）。这里提前判定一次：
+      # 不可用就停用签名（产物未签名但能出包），只有 REQUIRE_SIGNING=true 才硬失败。
+      - name: Validate signing certificate
+        id: cert
+        shell: bash
+        run: |
+          set +e
+          node scripts/win/check-win-cert.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "signing=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$REQUIRE_SIGNING" = "true" ]; then
+            echo "::error title=代码签名证书不可用::WIN_CSC_LINK 中的 .pfx 不能用于代码签名，且 REQUIRE_SIGNING=true"
+            exit 1
+          fi
+          if [ "$code" -eq 3 ]; then
+            echo "::warning title=未配置代码签名证书::WIN_CSC_LINK 为空，本次产出的是未签名安装包"
+          else
+            echo "::warning title=代码签名证书不可用::.pfx 无法用于代码签名（原因见上一步输出），本次产出未签名安装包"
+          fi
+          echo "signing=false" >> "$GITHUB_OUTPUT"
+        working-directory: ${{ env.source-path }}
+
+      # ── 安装程序 exe（NSIS，单包中英双语可选）────────────────────
+      - name: Package nsis
+        if: matrix.format == 'nsis'
+        env: &sign_env
+          # 证书不可用时清空 CSC_LINK：electron-builder、make-inno、make-msix
+          # 都以「变量为空」作为不签名的信号，避免再去解析那张坏证书
+          CSC_LINK: ${{ steps.cert.outputs.signing == 'true' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_LINK: ${{ steps.cert.outputs.signing == 'true' && secrets.WIN_CSC_LINK || '' }}
+        run: npx electron-builder --win nsis --${{ matrix.arch }} --publish never
+        working-directory: ${{ env.source-path }}
+
+      # ── 免安装 portable exe ──────────────────────────────────────
+      - name: Package portable
+        if: matrix.format == 'portable'
+        env: *sign_env
+        run: npx electron-builder --win portable --${{ matrix.arch }} --publish never
+        working-directory: ${{ env.source-path }}
+
+      # ── MSI：按语言各出一包（zh-CN / en-US，WiX 界面本地化）──────
+      - name: Package msi (zh-CN + en-US)
+        if: matrix.format == 'msi'
+        env: *sign_env
+        run: node scripts/common/dist-l10n.mjs win msi --${{ matrix.arch }}
+        working-directory: ${{ env.source-path }}
+
+      # ── Inno Setup：单包中英双语，脚本内部自己做 --dir 解包 ──────
+      - name: Install Inno Setup
+        if: matrix.format == 'inno'
+        run: choco install innosetup --version=6.7.1 --no-progress -y
+
+      - name: Package inno
+        if: matrix.format == 'inno'
+        env: *sign_env
+        run: node scripts/win/make-inno.mjs --arch ${{ matrix.arch }}
+        working-directory: ${{ env.source-path }}
+
+      # ── MSIX：需要 unpacked 目录当包内容，先 --dir 再打包 ────────
+      # makeappx 由脚本自己在 Windows Kits 里找（arm64 镜像的 SDK bin 不在 PATH）
+      # 是否签名由 job 级 MS_STORE 决定：true（默认）= 商店包，不签名；false = 侧载签名包
+      - name: Prepare unpacked (msix)
+        if: matrix.format == 'msix'
+        env: *sign_env
+        run: npx electron-builder --win --dir --${{ matrix.arch }} --publish never
+        working-directory: ${{ env.source-path }}
+
+      - name: Package msix
+        if: matrix.format == 'msix'
+        env: *sign_env
+        run: node scripts/win/make-msix.mjs --dir dist/${{ matrix.unpacked }} --arch ${{ matrix.arch }}
+        working-directory: ${{ env.source-path }}
+
+      # Authenticode 校验：文件是否真的签了、签名后有没有被改动。
+      # 只有证书真的可用时才升格为强制校验，否则未签名构建会整格红掉。
+      # 商店模式（MS_STORE=true）的 msix 按设计不签名，脚本会主动跳过它而不是判失败。
+      # 注意这里不要求「证书链受信」：自签名证书签出来的包，signtool verify /pa
+      # 必然报 0x800B0109（根不在受信任存储），那是证书性质而不是签名失败。
+      # 需要连链信任一起卡时，把下面的 --require 换成 --require-trust。
+      - name: Verify signatures
+        if: steps.cert.outputs.signing == 'true'
+        shell: bash
+        run: node scripts/common/verify-signatures.mjs --require
+        working-directory: ${{ env.source-path }}
+
+      - name: Verify signatures (unsigned build)
+        if: steps.cert.outputs.signing != 'true'
+        shell: bash
+        run: |
+          echo "::notice::本次为未签名构建（无有效证书），跳过强制校验，下面只列出实际情况"
+          node scripts/common/verify-signatures.mjs || true
+        working-directory: ${{ env.source-path }}
+
+      # 产物上传阿里云 OSS。三种扩展名一起传：本格只产出自己那种格式，
+      # 多写的 pattern 不会误传别人的包（nsis / inno / portable 都是 .exe，
+      # 但产物名分别带 -setup / -portable 后缀，不会撞键）。
+      - name: Upload to Aliyun OSS
+        shell: bash
+        # 凭据只挂这一步，理由同 macos 的 upload 步骤
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+          OSS_REGION: ${{ vars.OSS_REGION }}
+          OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
+        # 差分包按扩展名精确匹配（matrix.format 是 nsis/portable/msi…，拼不出扩展名，
+        # 用 '*.blockmap' 又会顺带命中其它格式的包）：<包名>.exe.blockmap / .msi.blockmap。
+        # 只有会做差分的目标才有，缺了不算失败。.yml 暂不传（latest*.yml 各架构同名会覆盖）
+        run: >-
+          node scripts/common/upload-oss.mjs --dir dist
+          --pattern '*.exe' --pattern '*.msi' --pattern '*.msix'
+          --pattern '*.exe.blockmap' --pattern '*.msi.blockmap' --pattern '*.msix.blockmap'
+        working-directory: ${{ env.source-path }}
+
+      # ── 收尾：从证书存储移除带私钥的证书，删掉 %TEMP% 里导出的 .pfx ──
+      # `if: always()` ＝ 成功、失败、被取消都执行；产物已传 OSS，这里只清凭据。
+      - name: Cleanup signing material
+        if: always()
+        continue-on-error: true
+        run: node scripts/common/ci-cleanup.mjs
+        working-directory: ${{ env.source-path }}
+
+  # ────────────────────────────────────────────────────────────────
+  # Linux：ubuntu-24.04（x64）+ ubuntu-24.04-arm（arm64）
+  # Ubuntu 22.04 runner 镜像已于 2026-09-17 进入弃用、2027-04-17 停止支持，
+  # 因此这里直接上 24.04；arm64 镜像同样提供 flatpak/rpm 等工具链。
+  # 工具链按格式按需安装，避免 AppImage 这种纯下载的格式白装一顿。
+  # ────────────────────────────────────────────────────────────────
+  linux:
+    name: Linux / ${{ matrix.format }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - create-release
+    # snap 要现装 snapcraft 并原地跑完整生命周期（含 apt 下载 stage-packages），给足时间
+    timeout-minutes: ${{ matrix.format == 'snap' && 45 || 40 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        format: [AppImage, deb, rpm, flatpak, snap]
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      # ── 工作空间：两个仓库分别 checkout 到子目录 ─────────────────
+      # main/    = 本仓库（工作流定义就在这里）
+      # desktop/ = 真正要打包的源码仓库，ref 可指定分支 / tag / commit
+      # persist-credentials: false：后续步骤不需要 push，别把 token 留在 .git/config
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          path: ${{ env.main-path }}
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          repository: ${{ env.repository }}
+          ref: ${{ inputs.ref }}
+          # 读 desktop 私有仓库的 PAT；VM_APP_TOKEN
+          token: ${{ secrets.VM_APP_TOKEN }}
+          path: ${{ env.source-path }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          # 工作空间下 package-lock.json 不在仓库根，必须显式指到 desktop/
+          cache-dependency-path: ${{ env.source-path }}/package-lock.json
+
+      - name: Cache Electron + builder binaries
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          # hashFiles 始终以工作空间根为基准，锁文件在 desktop/ 下，故拼上 source-path
+          key: eb-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/package-lock.json', env.source-path)) }}
+          restore-keys: eb-${{ runner.os }}-${{ runner.arch }}-
+
+      - run: npm ci
+        working-directory: ${{ env.source-path }}
+
+      - run: npm run build
+        working-directory: ${{ env.source-path }}
+
+      # deb 需要 fakeroot；rpm 需要 rpm 工具（两个都装，省一次条件判断）
+      - name: Install toolchain (deb / rpm)
+        if: matrix.format == 'deb' || matrix.format == 'rpm'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fakeroot rpm
+
+      - name: Install toolchain (flatpak)
+        if: matrix.format == 'flatpak'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y --user flathub \
+            org.freedesktop.Platform//24.08 \
+            org.freedesktop.Sdk//24.08 \
+            org.electronjs.Electron2.BaseApp//24.08
+
+      - name: Package ${{ matrix.format }}
+        if: matrix.format != 'snap'
+        run: npx electron-builder --linux ${{ matrix.format }} --${{ matrix.arch }} --publish never
+        working-directory: ${{ env.source-path }}
+
+      # snap：只需要装 snapcraft 一个。
+      # base 是 core24（= 24.04），与 runner 同版本，所以走 destructive 模式原地构建：
+      # 不装 LXD、不拉容器镜像。LXD 那条路在 runner 上会因容器内域名解析/NAT 不通报
+      # craft-providers「no network access」，还要多等十几分钟。
+      # destructive 模式要装 stage-packages、刷新 apt 源，必须以 root 运行。
+      - name: Install toolchain (snap)
+        if: matrix.format == 'snap'
+        uses: canonical/setup-lxd@main
+        with:
+          channel: latest/stable
+          group: ${{ env.LXD_GROUP }}
+
+      - name: Install snapcraft
+        if: matrix.format == 'snap'
+        run: sudo snap install snapcraft --classic
+
+      # destructive 模式要 root：snapcraft 会装 stage-packages、刷新 apt 源，
+      # 非 root 只会得到一条警告，随后在装 base/包时失败。sudo 保留 PATH 和缓存目录，
+      # 否则找不到 npx、Electron 压缩包也会重新下一遍。
+      - name: Package snap
+        if: matrix.format == 'snap'
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=PATH,HOME,ELECTRON_CACHE,ELECTRON_BUILDER_CACHE \
+            npx electron-builder --linux snap --${{ matrix.arch }} --publish never
+          # root 打出来的文件属主是 root，改回来免得后面 OSS 上传读不了
+          sudo chown -R "$USER" dist
+        working-directory: ${{ env.source-path }}
+
+      # 产物上传阿里云 OSS。pattern 直接用格式名：AppImage / deb / rpm / flatpak / snap
+      # 与扩展名一一对应，不会把别的格式带上去。
+      - name: Upload to Aliyun OSS
+        shell: bash
+        # 凭据只挂这一步，理由同 macos 的 upload 步骤
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+          OSS_REGION: ${{ vars.OSS_REGION }}
+          OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
+        # AppImage 有 blockmap（deb/rpm/flatpak/snap 没有），多带一个 pattern 不会让步骤失败：
+        # 脚本只要整体匹配到 ≥1 个文件就继续，缺 blockmap 时自然跳过。
+        # .yml 暂不传（latest-linux*.yml 各架构同名会覆盖）
+        run: >-
+          node scripts/common/upload-oss.mjs --dir dist
+          --pattern '*.${{ matrix.format }}' --pattern '*.${{ matrix.format }}.blockmap'
+        working-directory: ${{ env.source-path }}
+
+      # ── 收尾：Linux 侧主要防 GPG 私钥（本 job 不用，留着兜底）────────
+      # `if: always()` ＝ 成功、失败、被取消都执行；产物已传 OSS，这里只清凭据。
+      - name: Cleanup signing material
+        if: always()
+        continue-on-error: true
+        run: node scripts/common/ci-cleanup.mjs
+        working-directory: ${{ env.source-path }}
