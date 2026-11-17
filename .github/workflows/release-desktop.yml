@@ -29,7 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 # ──────────────────────────────────────────────────────────────────
 # 签名 / 公证所需的 Repository secrets
