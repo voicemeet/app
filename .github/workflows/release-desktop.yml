@@ -135,9 +135,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.sha_step.outputs.sha }}
-      version: ${{ steps.version_step.outputs.version }}
-      version_short: ${{ steps.version_step.outputs.version_short }}
-      build_number: ${{ steps.version_step.outputs.build_number }}
+      tag: ${{ steps.version_step.outputs.tag }}
       tag_name: ${{ steps.version_step.outputs.tag_name }}
     steps:
       - uses: actions/checkout@v7
@@ -180,8 +178,6 @@ jobs:
           BUILD_NUMBER="${{ github.run_number }}"
           echo "BUILD_NUMBER: $BUILD_NUMBER."
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
           echo "tag=desktop-v$VERSION.$BUILD_NUMBER" >> $GITHUB_OUTPUT
           echo "tag_name=Desktop v$VERSION.$BUILD_NUMBER" >> $GITHUB_OUTPUT
         working-directory: ${{ env.source-path }}
@@ -215,8 +211,8 @@ jobs:
         run: gh release edit "$TAG" --prerelease --draft=false --tag "$TAG_NAME" --target "$SHA"
         env:
           SHA: ${{ needs.create-release.outputs.sha }}
-          TAG: ${{ steps.version_step.outputs.tag }}
-          TAG_NAME: ${{ steps.version_step.outputs.tag_name }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+          TAG_NAME: ${{ needs.create-release.outputs.tag_name }}
           GH_TOKEN: ${{ github.token }}
         working-directory: ${{ env.main-path }}
 
