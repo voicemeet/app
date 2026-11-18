@@ -40,7 +40,7 @@ env:
 jobs:
   create-release:
     name: Create release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       flutter_channel: ${{ steps.flutter_version_step.outputs.flutter_channel }}
       flutter_version: ${{ steps.flutter_version_step.outputs.flutter_version }}
@@ -136,7 +136,7 @@ jobs:
 
   publish:
     name: Publish
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs:
       - create-release
       - apk
@@ -165,7 +165,7 @@ jobs:
 
   apk:
     name: Create apk
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs:
       - create-release
     steps:
@@ -277,7 +277,7 @@ jobs:
 
   appbundle:
     name: Create appbundle
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs:
       - create-release
     steps:

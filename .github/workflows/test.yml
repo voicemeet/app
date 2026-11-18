@@ -17,7 +17,7 @@ env:
 jobs:
   get-flutter-version:
     name: Get flutter version
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       flutter_channel: ${{ steps.flutter_version_step.outputs.flutter_channel }}
       flutter_version: ${{ steps.flutter_version_step.outputs.flutter_version }}
@@ -48,7 +48,7 @@ jobs:
 
   apk:
     name: Create apk
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs:
       - get-flutter-version
     steps:
