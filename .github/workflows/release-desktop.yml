@@ -207,11 +207,18 @@ jobs:
           path: ${{ env.main-path }}
 
       - name: Publish a release
-        run: gh release edit "$TAG" --prerelease --draft=false --tag "$TAG" --target "$SHA"
+        run: |
+          if [[ "$MS_STORE" == "true" && "$MAC_STORE" == "true" ]]; then
+            gh release edit "$TAG" --latest --draft=false --tag "$TAG" --target "$SHA"
+          else
+            gh release edit "$TAG" --prerelease --draft=false --tag "$TAG" --target "$SHA"
+          fi
         env:
           SHA: ${{ needs.create-release.outputs.sha }}
           TAG: ${{ needs.create-release.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
+          MS_STORE: ${{ inputs.MS_STORE }}
+          MAC_STORE: ${{ inputs.MAC_STORE }}
         working-directory: ${{ env.main-path }}
 
   # ────────────────────────────────────────────────────────────────
