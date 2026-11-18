@@ -4,7 +4,7 @@ on: [push, delete, workflow_dispatch]
 
 jobs:
   to_gitlab:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -16,7 +16,7 @@ jobs:
           ssh_private_key: ${{ secrets.GITLAB_SSH_PRIVATE_KEY }}
 
   to_codeberg:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
