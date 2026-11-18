@@ -33,6 +33,14 @@ inputs:
     description: "Object ACL: default, private or public-read. Empty inherits the bucket ACL"
     required: false
     default: ''
+  part-size:
+    description: "Multipart upload part size, e.g. 16M. ossutil calculates it from the file size when left empty"
+    required: false
+    default: '16M'
+  concurrency:
+    description: "Number of concurrent upload tasks, applied both between files (-j) and between parts of one file (--parallel)"
+    required: false
+    default: '10'
 
 runs:
   using: composite
@@ -92,6 +100,8 @@ runs:
         INPUT_SOURCE_DIR: ${{ inputs.source-dir }}
         INPUT_DESTINATION_DIR: ${{ inputs.destination-dir }}
         INPUT_ACL: ${{ inputs.acl }}
+        INPUT_PART_SIZE: ${{ inputs.part-size }}
+        INPUT_CONCURRENCY: ${{ inputs.concurrency }}
         # ossutil 2.x reads credentials from the environment, so no plaintext
         # key file is ever written to disk. These variables live only inside
         # this step's shell; see the "Clear credentials" step for the wipe.
@@ -166,6 +176,15 @@ runs:
         # Keep breakpoint state inside RUNNER_TEMP so it can be wiped afterwards
         # instead of being written into the workspace or the home directory.
         UPLOAD_ARGS+=(--checkpoint-dir "$CHECKPOINT_DIR")
+        # Fixed 16MiB parts; -j/--parallel come from the concurrency input
+        # (default 10), applied both between files and between the parts of a
+        # single large file.
+        if [ -n "$INPUT_PART_SIZE" ]; then
+          UPLOAD_ARGS+=(--part-size "$INPUT_PART_SIZE")
+        fi
+        if [ -n "$INPUT_CONCURRENCY" ]; then
+          UPLOAD_ARGS+=(-j "$INPUT_CONCURRENCY" --parallel "$INPUT_CONCURRENCY")
+        fi
 
         if [ -d "$INPUT_SOURCE_DIR" ]; then
           FILE_COUNT=$(find "$INPUT_SOURCE_DIR" -type f | wc -l | tr -d ' ')
