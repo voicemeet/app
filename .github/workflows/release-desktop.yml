@@ -283,7 +283,7 @@ jobs:
       #   MAS_IDENTITY      → mas     （Apple Distribution / 3rd Party Mac Developer Application）
       #   MAS_IDENTITY_DEV  → mas-dev （Apple Development）
       MAS_IDENTITY: ${{ vars.MAS_IDENTITY }}
-      MAS_IDENTITY_DEV: ${{ vars.MAS_IDENTITY_DEV }}
+      MAS_IDENTITY_DEV: ${{ secrets.MAS_IDENTITY_DEV }}
       # 脚本 mas-build.mjs 也读 MAC_STORE 判断目标。它与 format 轴同源于同一次输入，
       # 两者互为兜底、不会打架；push 触发时为空串，脚本按默认 true（商店包）处理
       MAC_STORE: ${{ inputs.MAC_STORE }}
@@ -543,7 +543,7 @@ jobs:
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_BUCKET: ${{ secrets.OSS_DESKTOP_BUCKET }}
           OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
           OSS_REGION: ${{ vars.OSS_REGION }}
           OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
@@ -561,7 +561,7 @@ jobs:
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_BUCKET: ${{ secrets.OSS_DESKTOP_BUCKET }}
           OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
           OSS_REGION: ${{ vars.OSS_REGION }}
           OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
@@ -585,7 +585,7 @@ jobs:
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_BUCKET: ${{ secrets.OSS_DESKTOP_BUCKET }}
           OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
           OSS_REGION: ${{ vars.OSS_REGION }}
           OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
@@ -651,9 +651,9 @@ jobs:
       WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
       MSIX_PUBLISHER: ${{ inputs.MS_STORE && secrets.MSIX_PUBLISHER || secrets.MSIX_PUBLISHER_DEV }}
       # 清单 Identity/@Name；未配置时脚本回退到 com.voicemeet.voicemeet
-      MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+      MSIX_IDENTITY_NAME: ${{ secrets.MSIX_IDENTITY_NAME }}
       # 清单 PublisherDisplayName（商店里显示的发布者）；必填，缺失时 make-msix 直接失败
-      MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+      MSIX_PUBLISHER_DISPLAY_NAME: ${{ secrets.MSIX_PUBLISHER_DISPLAY_NAME }}
       # 商店包开关：true（默认，也是 tag 推送时的取值）= msix 不签名，认证后由微软重签；
       # false = 出签名 msix，用于侧载 / 内部测试（此时 Publisher 必须与证书 Subject 一致）。
       # push 触发时 inputs 为空串，脚本按默认 true 处理。
@@ -809,7 +809,7 @@ jobs:
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_BUCKET: ${{ secrets.OSS_DESKTOP_BUCKET }}
           OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
           OSS_REGION: ${{ vars.OSS_REGION }}
           OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
@@ -955,7 +955,7 @@ jobs:
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_BUCKET: ${{ secrets.OSS_DESKTOP_BUCKET }}
           OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
           OSS_REGION: ${{ vars.OSS_REGION }}
           OSS_SECURITY_TOKEN: ${{ secrets.OSS_SECURITY_TOKEN }}
