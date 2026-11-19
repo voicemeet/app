@@ -6,9 +6,8 @@ inputs:
     description: "Endpoint of the bucket region, e.g. https://oss-cn-shenzhen.aliyuncs.com"
     required: true
   region:
-    description: "Region ID, e.g. cn-shenzhen. Derived from the endpoint when left empty"
-    required: false
-    default: ''
+    description: "Bucket region ID, e.g. cn-hangzhou. Required: v4 signing embeds it and it cannot be derived from acceleration or custom endpoints"
+    required: true
   access-key-id:
     description: "RAM user AccessKey ID"
     required: true
@@ -143,20 +142,17 @@ runs:
           exit 1
         fi
 
-        # ossutil 2.x signs with v4 by default, which requires a region. Accept an
-        # explicit value and otherwise derive it from a standard OSS endpoint.
+        # The region is supplied explicitly by the caller: ossutil signs with v4,
+        # whose credential scope embeds the region, and there is no reliable way to
+        # work it out from the endpoint (acceleration and CNAME domains carry none).
         REGION="$INPUT_REGION"
         if [ -z "$REGION" ]; then
-          ENDPOINT_HOST=$(printf '%s' "$INPUT_ENDPOINT" | sed -e 's#^[A-Za-z][A-Za-z0-9+.-]*://##' -e 's#/.*$##' -e 's#:.*$##')
-          REGION=$(printf '%s' "$ENDPOINT_HOST" | sed -e 's#\.aliyuncs\.com$##' -e 's#^oss-##' -e 's#-internal$##')
-          if ! printf '%s' "$REGION" | grep -Eq '^[a-z]{2}-[a-z0-9-]+$'; then
-            echo "::error::Cannot derive the region from endpoint '${INPUT_ENDPOINT}', please set the region input explicitly"
-            exit 1
-          fi
+          echo "::error::Missing region: pass the bucket region, e.g. region: cn-hangzhou"
+          exit 1
         fi
         export OSS_REGION="$REGION"
         export OSS_ENDPOINT="$INPUT_ENDPOINT"
-        echo "Using region ${OSS_REGION} / endpoint ${OSS_ENDPOINT}"
+        echo "Using region ${REGION} (v4 signature) / endpoint ${INPUT_ENDPOINT}"
 
         # Normalise the prefix: drop a leading "./" and any leading/trailing slashes.
         PREFIX=$(printf '%s' "$INPUT_DESTINATION_DIR" | sed -e 's#^\./##' -e 's#^/*##' -e 's#/*$##')
