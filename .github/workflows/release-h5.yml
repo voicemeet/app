@@ -23,7 +23,7 @@ env:
 jobs:
   h5:
     name: Create h5
-    runs-on: ubuntu-24.04
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,10 +46,11 @@ jobs:
           package-manager-cache: false
 
       - name: Install deps
-        run: |
-          npm i -g corepack
-          corepack use pnpm@latest-10
-          pnpm install
+        run: corepack enable && pnpm install --frozen-lockfile
+        working-directory: ${{ env.source-path }}
+
+      - name: Typecheck
+        run: pnpm typecheck
         working-directory: ${{ env.source-path }}
 
       - name: Build
