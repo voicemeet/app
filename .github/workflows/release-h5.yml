@@ -46,11 +46,11 @@ jobs:
           package-manager-cache: false
 
       - name: Install deps
-        run: corepack enable && pnpm install --frozen-lockfile
+        run: npm ci
         working-directory: ${{ env.source-path }}
 
       - name: Build
-        run: pnpm build:pro
+        run: npm run build:pro
         working-directory: ${{ env.source-path }}
 
       - name: Copy files to dist
